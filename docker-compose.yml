@@ -1,0 +1,27 @@
+# Local development and production share this file. The `bot` and `web` services
+# (and their Dockerfiles) are added in phases 4 and 8.
+name: mutebetbot
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mutebetbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mutebetbot}
+      POSTGRES_DB: ${POSTGRES_DB:-mutebetbot}
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      # Bound to localhost only; the bot reaches Postgres over the compose network in prod.
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

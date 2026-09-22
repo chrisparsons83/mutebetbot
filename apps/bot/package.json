@@ -1,0 +1,16 @@
+{
+  "name": "@mutebetbot/bot",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@mutebetbot/db": "workspace:*",
+    "@mutebetbot/shared": "workspace:*",
+    "zod": "^4.6.5"
+  }
+}

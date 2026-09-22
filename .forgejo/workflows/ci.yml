@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  check:
+    # Assumes a Forgejo runner registered with the `docker` label; adjust to match your runner.
+    runs-on: docker
+    container:
+      image: node:24-bookworm
+    services:
+      # Unused until phase 2 adds database tests; kept here so they can connect via DATABASE_URL.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: mutebetbot
+          POSTGRES_PASSWORD: mutebetbot
+          POSTGRES_DB: mutebetbot_test
+    env:
+      DATABASE_URL: postgres://mutebetbot:mutebetbot@postgres:5432/mutebetbot_test
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+  # TODO(phase 4/8): build and push bot/web images once their Dockerfiles exist.
+  # TODO(phase 2+): run Drizzle migrations as part of the deploy job.
