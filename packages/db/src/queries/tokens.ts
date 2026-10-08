@@ -92,3 +92,9 @@ export async function expireTokens(db: DbOrTx, now: Date): Promise<TokenRow[]> {
     .where(and(eq(tokens.status, 'available'), isNotNull(tokens.expiresAt), lte(tokens.expiresAt, now)))
     .returning();
 }
+
+/** Guild IDs that have anything queued (startup: promote what freed up while offline). */
+export async function guildsWithQueue(db: DbOrTx): Promise<string[]> {
+  const rows = await db.selectDistinct({ guildId: tokens.guildId }).from(tokens).where(eq(tokens.status, 'queued'));
+  return rows.map((r) => r.guildId);
+}

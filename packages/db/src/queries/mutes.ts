@@ -1,5 +1,5 @@
 import type { MuteStatus } from '@mutebetbot/shared';
-import { and, asc, count, desc, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, ne, sql } from 'drizzle-orm';
 import type { DbOrTx } from '../client.ts';
 import { mutes, type MuteRow } from '../schema.ts';
 
@@ -80,8 +80,16 @@ export async function lastMuteEnd(db: DbOrTx, guildId: string, targetId: string)
     .select({ completedAt: mutes.completedAt, endsAt: mutes.endsAt })
     .from(mutes)
     .where(and(eq(mutes.guildId, guildId), eq(mutes.targetId, targetId), ne(mutes.status, 'active'), ne(mutes.status, 'paused')))
-    .orderBy(desc(mutes.completedAt))
+    .orderBy(sql`coalesce(${mutes.completedAt}, ${mutes.endsAt}) desc`)
     .limit(1);
   if (!row) return undefined;
   return row.completedAt ?? row.endsAt;
+}
+
+/** Active and paused mutes in a guild (uninstall lifts all of them). */
+export async function runningMutesForGuild(db: DbOrTx, guildId: string): Promise<MuteRow[]> {
+  return db
+    .select()
+    .from(mutes)
+    .where(and(eq(mutes.guildId, guildId), inArray(mutes.status, ['active', 'paused'])));
 }

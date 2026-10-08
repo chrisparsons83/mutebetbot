@@ -14,7 +14,8 @@ export type BetStatus = (typeof BET_STATUSES)[number];
 export const CLAIM_KINDS = ['win', 'lose', 'void'] as const;
 export type ClaimKind = (typeof CLAIM_KINDS)[number];
 
-export const CLAIM_STATUSES = ['open', 'confirmed', 'disputed', 'superseded'] as const;
+/** `superseded`: an admin ruled while it was open. `lapsed`: a void proposal nobody answered. */
+export const CLAIM_STATUSES = ['open', 'confirmed', 'disputed', 'superseded', 'lapsed'] as const;
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 
 export const TOKEN_STATUSES = ['available', 'queued', 'active', 'completed', 'expired', 'revoked'] as const;

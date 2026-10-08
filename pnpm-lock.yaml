@@ -229,7 +229,11 @@ importers:
         specifier: ^0.31.11
         version: 0.31.11
 
-  packages/shared: {}
+  packages/shared:
+    dependencies:
+      discord-api-types:
+        specifier: ^0.38.49
+        version: 0.38.56
 
 packages:
 

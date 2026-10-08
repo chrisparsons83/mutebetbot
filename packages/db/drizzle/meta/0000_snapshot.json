@@ -1,5 +1,5 @@
 {
-  "id": "f8c4c299-37c5-456b-8276-7fac5344ab75",
+  "id": "eb4535db-fd38-4e56-b5e2-36dd1d549d3f",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -991,7 +991,8 @@
         "open",
         "confirmed",
         "disputed",
-        "superseded"
+        "superseded",
+        "lapsed"
       ]
     },
     "public.mute_kind": {

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 import * as schema from './schema.ts';
@@ -17,4 +18,12 @@ export function createDb(url: string, opts: { max?: number } = {}): DbHandle {
   const pool = new pg.Pool({ connectionString: url, max: opts.max ?? 10 });
   const db = drizzle(pool, { schema, casing: 'snake_case' });
   return { db, pool, close: () => pool.end() };
+}
+
+/** True if the database answers a trivial query. */
+export async function pingDb(db: Db): Promise<boolean> {
+  return db
+    .execute(sql`select 1`)
+    .then(() => true)
+    .catch(() => false);
 }

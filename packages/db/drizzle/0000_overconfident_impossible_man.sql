@@ -1,6 +1,6 @@
 CREATE TYPE "public"."bet_status" AS ENUM('proposed', 'active', 'claim_pending', 'disputed', 'resolved', 'void', 'declined', 'expired', 'cancelled');--> statement-breakpoint
 CREATE TYPE "public"."claim_kind" AS ENUM('win', 'lose', 'void');--> statement-breakpoint
-CREATE TYPE "public"."claim_status" AS ENUM('open', 'confirmed', 'disputed', 'superseded');--> statement-breakpoint
+CREATE TYPE "public"."claim_status" AS ENUM('open', 'confirmed', 'disputed', 'superseded', 'lapsed');--> statement-breakpoint
 CREATE TYPE "public"."mute_kind" AS ENUM('timeout', 'honor');--> statement-breakpoint
 CREATE TYPE "public"."mute_status" AS ENUM('active', 'paused', 'completed');--> statement-breakpoint
 CREATE TYPE "public"."rejoin_policy" AS ENUM('restart_full', 'resume_remaining');--> statement-breakpoint
