@@ -1,0 +1,2 @@
+# Gitignored files Orca copies from the primary checkout into each new worktree.
+.env
