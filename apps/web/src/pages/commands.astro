@@ -1,0 +1,95 @@
+---
+// Generated from the same definitions the bot registers (packages/shared/src/commands.ts).
+import { COMMANDS } from '@mutebetbot/shared';
+import Base from '../layouts/Base.astro';
+
+const SUBCOMMAND = 1;
+const GROUP = 2;
+const TYPE_NAMES: Record<number, string> = { 3: 'text', 4: 'number', 5: 'true/false', 6: 'user', 7: 'channel', 8: 'role', 10: 'number' };
+
+interface Opt {
+  type: number;
+  name: string;
+  description: string;
+  required?: boolean;
+  options?: Opt[];
+  choices?: { name: string; value: string | number }[];
+}
+
+interface Row {
+  path: string;
+  usage: string;
+  description: string;
+  who: string;
+  options: Opt[];
+}
+
+const sections = COMMANDS.map((cmd) => {
+  const rows: Row[] = [];
+  const add = (sub: Opt, prefix: string) => {
+    const key = prefix ? `${prefix} ${sub.name}` : sub.name;
+    const options = sub.options ?? [];
+    rows.push({
+      path: `/${cmd.name} ${key}`,
+      usage: [`/${cmd.name} ${key}`, ...options.map((o) => (o.required ? `${o.name}:` : `[${o.name}:]`))].join(' '),
+      description: sub.description,
+      who: cmd.doc.who[key] ?? 'Anyone',
+      options,
+    });
+  };
+  for (const opt of (cmd.options ?? []) as Opt[]) {
+    if (opt.type === GROUP) for (const sub of opt.options ?? []) add(sub, opt.name);
+    else if (opt.type === SUBCOMMAND) add(opt, '');
+  }
+  return { name: cmd.name, description: cmd.description, rows };
+});
+
+const describe = (o: Opt) =>
+  `${o.description}${o.choices?.length ? ` (${o.choices.map((c) => c.value).join(', ')})` : ''}${o.required ? '' : ' · optional'}`;
+---
+
+<Base title="Commands" description="Every MuteBetBot slash command and its options.">
+  <h1>Commands</h1>
+  <p class="lead">All commands work inside a server. Bets and tokens have short IDs like <code>B7K2</code> and <code>T9QX</code>, with autocomplete.</p>
+  {
+    sections.map((s) => (
+      <section>
+        <h2>/{s.name}</h2>
+        <p>{s.description}</p>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Who</th>
+                <th>What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.rows.map((r) => (
+                <tr id={r.path.slice(1).replace(/ /g, '-')}>
+                  <td>
+                    <code>{r.path}</code>
+                  </td>
+                  <td>{r.who}</td>
+                  <td>
+                    {r.description}
+                    {r.options.length > 0 && (
+                      <ul>
+                        {r.options.map((o) => (
+                          <li>
+                            <code>{o.name}</code> <small>({TYPE_NAMES[o.type] ?? 'value'})</small>: {describe(o)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    ))
+  }
+</Base>

@@ -1,0 +1,15 @@
+{
+  "name": "@mutebetbot/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@mutebetbot/shared": "workspace:*",
+    "astro": "7.3.5",
+    "cookie": "2.0.1"
+  }
+}

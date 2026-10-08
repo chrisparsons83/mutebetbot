@@ -1,0 +1,68 @@
+# Production stack: Postgres, a one-shot migration, the bot, and the website behind Traefik.
+# Expects a .env next to this file (see .env.example) and an external "traefik" network.
+#   docker compose -f compose.prod.yaml up -d --build
+name: mutebetbot
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 10
+
+  # Runs migrations, then exits; the bot waits for it to succeed.
+  migrate:
+    build: { context: ., dockerfile: apps/bot/Dockerfile }
+    image: mutebetbot-bot
+    command: ["node", "packages/db/src/migrate.ts"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  bot:
+    image: mutebetbot-bot
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    # Exactly one bot process per token: two would double-apply timers.
+    deploy: { replicas: 1 }
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+        PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+    restart: unless-stopped
+    networks: [default, traefik]
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: traefik
+      traefik.http.routers.mutebetbot.rule: Host(`mutebetbot.flexspotff.com`)
+      traefik.http.routers.mutebetbot.entrypoints: websecure
+      traefik.http.routers.mutebetbot.tls: "true"
+      traefik.http.services.mutebetbot.loadbalancer.server.port: "80"
+
+volumes:
+  pgdata:
+
+networks:
+  traefik:
+    external: true

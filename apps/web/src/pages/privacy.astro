@@ -1,0 +1,33 @@
+---
+import { SUPPORT_LINKS } from '@mutebetbot/shared';
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Privacy policy" description="What MuteBetBot stores and for how long.">
+  <h1>Privacy policy</h1>
+  <p>Last updated: October 2026.</p>
+
+  <h2>What we store</h2>
+  <ul>
+    <li>Discord IDs of servers, members, channels, roles, and messages involved in bets, tokens, and mutes.</li>
+    <li>The text of bet terms (up to 200 characters) and optional dispute reasons.</li>
+    <li>Timestamps of bet, token, and mute events, plus each server's MuteBetBot settings.</li>
+  </ul>
+
+  <h2>What we don't</h2>
+  <ul>
+    <li>We never read message content. To remind honor-muted members, the bot only notices <em>who</em> posted and <em>where</em>.</li>
+    <li>No email addresses, IP addresses, or payment information. There is no money involved.</li>
+    <li>Nothing is sold or shared with third parties.</li>
+  </ul>
+
+  <h2>Retention</h2>
+  <p>Data is kept while the bot is in your server. When the bot is removed, the server's data is soft-deleted and permanently purged 30 days later, so a quick re-add keeps your history.</p>
+
+  <h2>Deletion requests</h2>
+  <p>
+    To have your data deleted or anonymized, open an issue at <a href={SUPPORT_LINKS.issues}>{SUPPORT_LINKS.issues}</a> (you can ask
+    for a private follow-up) or contact us through the <a href="/support">support page</a>. We delete your rows or replace your ID
+    with an anonymous placeholder, usually within 30 days.
+  </p>
+</Base>

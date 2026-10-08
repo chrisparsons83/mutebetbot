@@ -1,0 +1,63 @@
+---
+import { CONFIG_LIMITS, DEFAULT_CONFIG, formatDuration, MARKER_ROLE_NAME, MUTE_DURATION_KEYS, TOKEN_EXPIRY_KEYS } from '@mutebetbot/shared';
+import Base from '../layouts/Base.astro';
+
+const c = DEFAULT_CONFIG;
+const settings = [
+  ['max_concurrent_mutes', String(c.maxConcurrentMutes), `${CONFIG_LIMITS.maxConcurrentMutes.min}–${CONFIG_LIMITS.maxConcurrentMutes.max}`, 'How many members can be bet-muted at once. Over the cap, redemptions wait or can join a queue.'],
+  ['token_expiry', c.tokenExpiry, TOKEN_EXPIRY_KEYS.join(', '), 'How long a won token stays redeemable.'],
+  ['allowed_durations', c.allowedDurations.join(', '), `any of ${MUTE_DURATION_KEYS.join(', ')}`, 'Durations offered by /bet create.'],
+  ['confirm_window', formatDuration(c.confirmWindowS), '1h–14d', 'Time to answer a claim before it goes to an admin.'],
+  ['target_cooldown', formatDuration(c.targetCooldownS), '0–7d', 'Minimum gap between two bet-mutes on the same member.'],
+  ['max_open_proposals_per_user', String(c.maxOpenProposalsPerUser), '1–10', 'Unaccepted proposals one member can have open.'],
+  ['unmutable_members', c.unmutableMembers, 'honor, reject', 'Bets with admins or members above the bot: honor mutes, or refused.'],
+  ['rejoin_policy', c.rejoinPolicy, 'restart_full, resume_remaining', 'What happens when a muted member leaves and comes back.'],
+  ['admin_role', 'none', 'any role', 'Holders can use admin commands, in addition to Manage Server.'],
+  ['announce_channel', 'none', 'any text channel', 'Where results, disputes, and mutes are posted (default: where they happen).'],
+  ['enabled', 'true', 'true, false', 'Pause new bets and redemptions without uninstalling.'],
+];
+---
+
+<Base title="Setup" description="Role order, permissions, and settings for MuteBetBot.">
+  <h1>Setup</h1>
+  <p class="lead">MuteBetBot works the moment it joins. One thing needs a human: role order.</p>
+
+  <h2>1. Move the bot's role up</h2>
+  <p>
+    Discord only lets a bot time out members whose highest role is <strong>below</strong> the bot's own. New bot roles start near
+    the bottom, so open <strong>Server Settings → Roles</strong> and drag <strong>MuteBetBot</strong> above the roles of anyone who
+    will bet.
+  </p>
+  <div class="card">
+    <pre style="margin:0">Server Owner
+Admin
+<strong>MuteBetBot          ← put it here</strong>
+Regulars            ← can be timed out
+{MARKER_ROLE_NAME}  ← created by the bot, below it
+@everyone</pre>
+  </div>
+  <p>
+    Administrators, the owner, and members above the bot can still bet. If they lose they get an <em>honor mute</em>: the marker
+    role plus a public reminder when they talk, but no timeout.
+  </p>
+  <p>Run <code>/mutebet repair</code> any time to re-check permissions and role order.</p>
+
+  <h2>2. Permissions</h2>
+  <p>The invite link asks for exactly these: Moderate Members, Manage Roles, View Channels, Send Messages, Embed Links, Read Message History, and (optional) View Audit Log, used to notice when a moderator lifts a bet-mute by hand.</p>
+
+  <h2>3. Settings</h2>
+  <p>Admins (Manage Server, or the configured admin role) change these with <code>/mutebet config set</code>. Changes apply to new bets and tokens; existing ones keep their terms.</p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Setting</th><th>Default</th><th>Allowed</th><th>What it does</th></tr></thead>
+      <tbody>
+        {settings.map(([name, def, allowed, what]) => (
+          <tr><td><code>{name}</code></td><td>{def}</td><td>{allowed}</td><td>{what}</td></tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Removing the bot</h2>
+  <p class="note">Use <code>/mutebet uninstall</code> before removing the bot to clean up its role. It lifts running bet-mutes, deletes the marker role, and leaves. If you just kick it, the role stays behind and running timeouts expire on their own within 24 hours.</p>
+</Base>

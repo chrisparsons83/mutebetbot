@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+apps/web/.astro
+.env
+.env.*
+!.env.example
+.discord-info
+.git

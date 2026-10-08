@@ -1,0 +1,39 @@
+---
+import { DEFAULT_CONFIG, MUTE_DURATION_KEYS } from '@mutebetbot/shared';
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="MuteBetBot">
+  <h1>Bet your silence.</h1>
+  <p class="lead">
+    MuteBetBot lets two members of a Discord server wager <em>time</em>, not money. Lose the bet, and the winner gets to mute
+    you: {MUTE_DURATION_KEYS.join(', ')}, fixed before anyone shakes on it.
+  </p>
+  <a class="button" href="/invite">Add to Discord</a>
+
+  <h2>How a bet works</h2>
+  <ol class="steps">
+    <li>
+      <strong>Propose</strong>
+      <code>/bet create</code> names your opponent, the terms, and the mute duration. Both of you click 🤝&nbsp;Accept to make it
+      binding.
+    </li>
+    <li>
+      <strong>Settle</strong>
+      When it's decided, one of you runs <code>/bet resolve</code> and the other confirms. Disagree? An admin rules.
+    </li>
+    <li>
+      <strong>Redeem</strong>
+      The winner gets a mute token and picks <em>when</em> to use it with <code>/mute redeem</code>. Discord's own timeout does
+      the rest.
+    </li>
+  </ol>
+
+  <h2>Built to stay fun</h2>
+  <ul>
+    <li>Admins cap how many people can be bet-muted at once (default {DEFAULT_CONFIG.maxConcurrentMutes}).</li>
+    <li>A cooldown stops back-to-back revenge mutes, and nobody can be muted twice at the same time.</li>
+    <li>The bot never shortens a moderator's timeout, and its messages can't ping <code>@everyone</code>.</li>
+    <li>Admins and members above the bot can still bet: they get an <em>honor mute</em> instead.</li>
+  </ul>
+</Base>
