@@ -30,4 +30,14 @@ Schema changes: edit `packages/db/src/schema.ts`, then `pnpm db:generate` and `p
 
 ## Deploy
 
-`docker compose -f compose.prod.yaml up -d --build` runs Postgres, a one-shot migration, the bot, and the website (Traefik routes `mutebetbot.flexspotff.com`). Run `pnpm bot:register --global` once with production credentials to register commands globally. Run only one bot process per token.
+Pushing to `main` runs CI, builds both images, pushes them to the Vultr Container Registry
+(`sjc.vultrcr.com/chrisparsons/mutebetbot-{bot,web}`), copies `compose.prod.yaml` to
+`~/mutebetbot/compose.yaml` on the VPS, then pulls, restarts, and re-registers global slash commands.
+
+One-time setup:
+
+- Repo secrets (same as flexspotff): `VULTR_USERNAME`, `VULTR_API_KEY`, `DEPLOY_HOST`, `DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_KEY`.
+- Repo variable `DISCORD_CLIENT_ID` for the production app (used to build the `/invite` page).
+- On the server, `~/mutebetbot/.env` with `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`.
+
+Run only one bot process per token.

@@ -1,6 +1,7 @@
-# Production stack: Postgres, a one-shot migration, the bot, and the website behind Traefik.
-# Expects a .env next to this file (see .env.example) and an external "traefik" network.
-#   docker compose -f compose.prod.yaml up -d --build
+# Production stack on the Vultr VPS: Postgres, a one-shot migration, the bot, and the
+# website behind Traefik. CI copies this file to ~/mutebetbot/compose.yaml on the server
+# and runs `docker compose pull && docker compose up -d` (see .github/workflows/ci.yml).
+# The server also needs ~/mutebetbot/.env (see .env.example) and an external "traefik" network.
 name: mutebetbot
 
 services:
@@ -20,8 +21,7 @@ services:
 
   # Runs migrations, then exits; the bot waits for it to succeed.
   migrate:
-    build: { context: ., dockerfile: apps/bot/Dockerfile }
-    image: mutebetbot-bot
+    image: sjc.vultrcr.com/chrisparsons/mutebetbot-bot:latest
     command: ["node", "packages/db/src/migrate.ts"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -30,7 +30,7 @@ services:
     restart: "no"
 
   bot:
-    image: mutebetbot-bot
+    image: sjc.vultrcr.com/chrisparsons/mutebetbot-bot:latest
     restart: unless-stopped
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
@@ -44,12 +44,7 @@ services:
     deploy: { replicas: 1 }
 
   web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-      args:
-        DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
-        PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+    image: sjc.vultrcr.com/chrisparsons/mutebetbot-web:latest
     restart: unless-stopped
     networks: [default, traefik]
     labels:
