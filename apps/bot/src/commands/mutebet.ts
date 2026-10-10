@@ -7,19 +7,22 @@ import { planAdminRule } from '../domain/bets.ts';
 import { parseConfigSet } from '../domain/config.ts';
 import { isBotAdmin } from '../domain/members.ts';
 import { COLORS } from '../discord/render.ts';
-import { memberAuthority, mention, nameOf, onlyUsers, theBet, UserError } from '../discord/util.ts';
+import { isMutable, memberAuthority, mention, nameOf, onlyUsers, theBet, UserError } from '../discord/util.ts';
 import { isTokenExpired } from '../domain/mutes.ts';
 import { adminRule } from '../services/bets.ts';
 import { buildSetupReport, ensureMarkerRole, setupEmbed } from '../services/guild-setup.ts';
-import { adminUnmute, finalizeMute, revokeToken } from '../services/mutes.ts';
+import { adminUnmute, finalizeMute, grantToken, revokeToken } from '../services/mutes.ts';
 import {
   betChoiceLabel,
   betFromOption,
   guildConfig,
   guildRow,
   memberIdsMatching,
+  respondWithDurations,
   withTerms,
   wonMuteFromOption,
+  wonMuteOrigin,
+  wonMuteValue,
   type Autocomplete,
   type Command,
   type CommandModule,
@@ -52,6 +55,31 @@ async function rule(app: App, i: Command) {
   const r = await adminRule(app, bet, i.user.id, plan.outcome);
   await i.editReply({
     content: r.bet.status === 'void' ? `Called off ${theBet(bet.terms)}.` : `Settled ${theBet(bet.terms)}. ${mention(r.bet.winnerId!)} won.`,
+    allowedMentions: onlyUsers(),
+  });
+}
+
+async function grant(app: App, i: Command, config: GuildConfig) {
+  const facts = (name: 'holder' | 'target') => {
+    const user = i.options.getUser(name, true);
+    const member = i.options.getMember(name);
+    return { id: user.id, isBot: user.bot, inGuild: Boolean(member), mutable: member ? isMutable(member) : false };
+  };
+  // Saving the token and DMing the holder can outlast Discord's 3 s reply window.
+  await i.deferReply({ flags: MessageFlags.Ephemeral });
+  const { token, dmSent } = await grantToken(app, {
+    guildId: i.guildId,
+    guildName: i.guild.name,
+    config,
+    adminId: i.user.id,
+    holder: facts('holder'),
+    target: facts('target'),
+    duration: i.options.getString('duration', true),
+    reason: i.options.getString('reason') ?? undefined,
+  });
+  const sent = dmSent ? "I've sent them a DM." : "I couldn't DM them, so let them know it's in `/mute list`.";
+  await i.editReply({
+    content: `Gave ${mention(token.holderId)} a ${formatDuration(token.durationS)} mute on ${mention(token.targetId)}. ${sent}`,
     allowedMentions: onlyUsers(),
   });
 }
@@ -133,6 +161,8 @@ async function execute(app: App, i: Command) {
       await adminUnmute(app, i.guildId, user.id, i.user.id);
       return void (await i.editReply({ content: `Lifted ${mention(user.id)}'s bet-mute.`, allowedMentions: onlyUsers() }));
     }
+    case 'grant':
+      return grant(app, i, config);
     case 'revoke': {
       const token = await revokeToken(app, await wonMuteFromOption(app, i), i.user.id);
       return void (await i.reply({ content: `Cancelled ${mention(token.holderId)}'s mute on ${mention(token.targetId)}.`, flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() }));
@@ -147,7 +177,9 @@ async function execute(app: App, i: Command) {
 }
 
 async function autocomplete(app: App, i: Autocomplete) {
-  const query = i.options.getFocused();
+  const focused = i.options.getFocused(true);
+  const query = focused.value;
+  if (focused.name === 'duration') return respondWithDurations(app, i, query);
   if (i.options.getSubcommand() === 'revoke') {
     const now = new Date();
     const rows = await listWonMutes(app.db, i.guildId, { statuses: ['available', 'queued'], query, userIds: memberIdsMatching(i.guild, query) });
@@ -157,7 +189,7 @@ async function autocomplete(app: App, i: Autocomplete) {
         .map(({ token, bet }) => {
           const waiting = token.status === 'queued' ? ', waiting' : '';
           const head = `${nameOf(i.guild, token.holderId)} can mute ${nameOf(i.guild, token.targetId)}${waiting}`;
-          return { name: withTerms(head, bet.terms), value: bet.shortId };
+          return { name: withTerms(head, wonMuteOrigin(i.guild, token, bet)), value: wonMuteValue(token, bet) };
         })
         .slice(0, 25),
     );

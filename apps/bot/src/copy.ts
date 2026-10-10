@@ -52,6 +52,16 @@ export function explain(e: { error: string } & Record<string, unknown>): string 
       return `That bet is ${STATUS_LABEL[e.status as BetStatus].toLowerCase()}. Only active or disputed bets can be ruled on.`;
     case 'winner_not_party':
       return 'The winner must be one of the two people in the bet.';
+    case 'self_grant':
+      return "The holder and the target have to be different people.";
+    case 'bot_grant':
+      return "Bots can't hold or be the target of a mute.";
+    case 'grant_to_self':
+      return "You can't grant a mute to yourself. Ask another admin.";
+    case 'grant_not_member':
+      return `${mention(e.userId as string)} isn't in this server.`;
+    case 'unmutable_target':
+      return `This server doesn't allow honor mutes, and I can't time out ${mention(e.userId as string)}.`;
     case 'not_holder':
       return 'Only the winner can use this mute.';
     case 'not_available':
@@ -97,8 +107,10 @@ export function wonMuteStatusText(s: TokenStatus): string {
   }[s];
 }
 
-/** The public line when a mute starts. */
-export const mutedLine = (targetId: string, winnerId: string, endsAt: Date, honor: boolean) =>
-  honor
-    ? `${mention(targetId)} lost a bet to ${mention(winnerId)} and is on an honor mute until ${ts(endsAt, 't')}.`
-    : `${mention(targetId)} lost a bet to ${mention(winnerId)} and is muted until ${ts(endsAt, 't')}.`;
+/** The public line when a mute starts. A granted mute wasn't lost on a bet, so it says so differently. */
+export function mutedLine(targetId: string, holderId: string, endsAt: Date, honor: boolean, granted = false): string {
+  const how = granted ? `was muted by ${mention(holderId)}` : `lost a bet to ${mention(holderId)}`;
+  return honor
+    ? `${mention(targetId)} ${how} and is on an honor mute until ${ts(endsAt, 't')}.`
+    : `${mention(targetId)} ${how} and is muted until ${ts(endsAt, 't')}.`;
+}

@@ -34,6 +34,7 @@ const token = (over: Partial<TokenRow> = {}): TokenRow => ({
   shortId: 'THKG',
   guildId: 'g',
   betId: 'bet-uuid',
+  grantedBy: null,
   holderId: '1',
   targetId: '2',
   durationS: 1800,

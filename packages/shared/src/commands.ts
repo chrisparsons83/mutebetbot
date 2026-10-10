@@ -178,7 +178,18 @@ export const MUTEBET_COMMAND: Command = {
       description: 'End a bet-mute early',
       options: [{ type: Opt.User, name: 'user', description: 'The bet-muted member', required: true }],
     },
-    { type: Opt.Subcommand, name: 'revoke', description: "Cancel a won mute that hasn't been used", options: [betOption('The bet whose mute to cancel')] },
+    {
+      type: Opt.Subcommand,
+      name: 'grant',
+      description: 'Give a member a mute without a bet. It works like one won on a bet.',
+      options: [
+        { type: Opt.User, name: 'holder', description: 'Who gets the mute', required: true },
+        { type: Opt.User, name: 'target', description: 'Who the mute can be used on', required: true },
+        { type: Opt.String, name: 'duration', description: 'How long the mute lasts', required: true, autocomplete: true },
+        { type: Opt.String, name: 'reason', description: 'Sent to the holder and kept in the history', max_length: 200 },
+      ],
+    },
+    { type: Opt.Subcommand, name: 'revoke', description: "Cancel a mute that hasn't been used", options: [betOption('The mute to cancel')] },
     {
       type: Opt.SubcommandGroup,
       name: 'config',
@@ -262,6 +273,7 @@ export const MUTEBET_COMMAND: Command = {
     who: {
       rule: 'Admin',
       unmute: 'Admin',
+      grant: 'Admin',
       revoke: 'Admin',
       'config view': 'Admin',
       'config set': 'Admin',

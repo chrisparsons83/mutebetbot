@@ -1,4 +1,4 @@
-import { activeMutesForGuild, getBet, listWonMutes, queuedTokens } from '@mutebetbot/db';
+import { activeMutesForGuild, listWonMutes, queuedTokens } from '@mutebetbot/db';
 import { formatDuration, type TokenStatus } from '@mutebetbot/shared';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, type ButtonInteraction } from 'discord.js';
 import type { App } from '../context.ts';
@@ -6,9 +6,19 @@ import { blockerText, mutedLine } from '../copy.ts';
 import { isTokenExpired } from '../domain/mutes.ts';
 import { COLORS, customId, describeMute } from '../discord/render.ts';
 import { clip, mention, nameOf, onlyUsers, ts, UserError } from '../discord/util.ts';
-import { MuteBlockedError, redeemToken, unqueueToken } from '../services/mutes.ts';
+import { betChannelId, MuteBlockedError, redeemToken, unqueueToken } from '../services/mutes.ts';
 import { announce } from '../services/notify.ts';
-import { guildConfig, memberIdsMatching, withTerms, wonMuteFromOption, type Autocomplete, type Command, type CommandModule } from './common.ts';
+import {
+  guildConfig,
+  memberIdsMatching,
+  withTerms,
+  wonMuteFromOption,
+  wonMuteOrigin,
+  wonMuteValue,
+  type Autocomplete,
+  type Command,
+  type CommandModule,
+} from './common.ts';
 
 async function list(app: App, i: Command) {
   const now = new Date();
@@ -17,7 +27,7 @@ async function list(app: App, i: Command) {
   );
   const fields = rows.slice(0, 25).map(({ token, bet }) => {
     const when = token.status === 'queued' ? 'Waiting in line' : token.expiresAt ? `Use by ${ts(token.expiresAt, 'D')}` : 'No deadline';
-    return { name: clip(bet.terms.split('\n')[0]!, 100), value: `${mention(token.targetId)} for ${formatDuration(token.durationS)}\n${when}` };
+    return { name: clip(wonMuteOrigin(i.guild, token, bet), 100), value: `${mention(token.targetId)} for ${formatDuration(token.durationS)}\n${when}` };
   });
   const embed = new EmbedBuilder()
     .setTitle("Mutes you've won")
@@ -54,14 +64,13 @@ export async function useMute(app: App, i: Command | ButtonInteraction<'cached'>
     return;
   }
   await i.editReply({ content: 'The mute has started.', components: [] });
-  const line = mutedLine(r.mute.targetId, i.user.id, r.mute.endsAt, r.mute.kind === 'honor');
+  const line = mutedLine(r.mute.targetId, i.user.id, r.mute.endsAt, r.mute.kind === 'honor', Boolean(r.token.grantedBy));
   const pings = onlyUsers(r.mute.targetId, i.user.id);
   // Post where it happened; also in the announce channel if one is configured elsewhere.
   await i.followUp({ content: line, allowedMentions: pings });
   const config = await guildConfig(app, i.guildId);
   if (config.announceChannelId && config.announceChannelId !== i.channelId) {
-    const bet = await getBet(app.db, r.token.betId);
-    await announce(app, i.guild, bet?.channelId ?? null, { content: line, allowedMentions: pings });
+    await announce(app, i.guild, await betChannelId(app, r.token), { content: line, allowedMentions: pings });
   }
 }
 
@@ -75,7 +84,7 @@ async function status(app: App, i: Command) {
       { name: `Muted now (${timeouts} of ${config.maxConcurrentMutes})`, value: active.map(describeMute).join('\n') || 'Nobody' },
       {
         name: `Waiting in line (${queue.length})`,
-        value: queue.map((t, n) => `${n + 1}. ${mention(t.targetId)} for ${formatDuration(t.durationS)}, won by ${mention(t.holderId)}`).join('\n').slice(0, 1024) || 'Nobody',
+        value: queue.map((t, n) => `${n + 1}. ${mention(t.targetId)} for ${formatDuration(t.durationS)}, ${t.grantedBy ? 'held' : 'won'} by ${mention(t.holderId)}`).join('\n').slice(0, 1024) || 'Nobody',
       },
     );
   await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() });
@@ -109,8 +118,8 @@ async function autocomplete(app: App, i: Autocomplete) {
     rows
       .filter(({ token }) => !isTokenExpired(token, now))
       .map(({ token, bet }) => {
-        const name = withTerms(`Mute ${nameOf(i.guild, token.targetId)} for ${formatDuration(token.durationS)}`, bet.terms);
-        return { name, value: bet.shortId };
+        const name = withTerms(`Mute ${nameOf(i.guild, token.targetId)} for ${formatDuration(token.durationS)}`, wonMuteOrigin(i.guild, token, bet));
+        return { name, value: wonMuteValue(token, bet) };
       })
       .slice(0, 25),
   );

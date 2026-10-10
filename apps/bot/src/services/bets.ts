@@ -47,8 +47,9 @@ export async function betCardExtra(app: App, bet: BetRow): Promise<BetCardExtra>
   return { claim, token, mute, loserName };
 }
 
-/** Re-renders the public bet message after a state change. Best-effort. */
-export async function refreshBetMessage(app: App, betId: string): Promise<void> {
+/** Re-renders the public bet message after a state change. Best-effort; a granted mute (no bet) has none. */
+export async function refreshBetMessage(app: App, betId: string | null): Promise<void> {
+  if (!betId) return;
   const bet = await getBet(app.db, betId);
   if (!bet?.messageId) return;
   const guild = guildOf(app, bet.guildId);
