@@ -1,5 +1,15 @@
-import { getBetByShortId, getGuild, getTokenForBet, toGuildConfig, upsertGuild, type BetRow, type GuildRow, type TokenRow } from '@mutebetbot/db';
-import { normalizeShortId, type GuildConfig } from '@mutebetbot/shared';
+import {
+  getBetByShortId,
+  getGuild,
+  getTokenByShortId,
+  getTokenForBet,
+  toGuildConfig,
+  upsertGuild,
+  type BetRow,
+  type GuildRow,
+  type TokenRow,
+} from '@mutebetbot/db';
+import { formatDuration, MUTE_DURATIONS, normalizeShortId, type GuildConfig } from '@mutebetbot/shared';
 import type { AutocompleteInteraction, ChatInputCommandInteraction, Guild } from 'discord.js';
 import type { App } from '../context.ts';
 import { clip, nameOf, UserError } from '../discord/util.ts';
@@ -30,12 +40,35 @@ export async function betFromOption(app: App, i: Command, name = 'bet'): Promise
   return bet;
 }
 
-/** The mute won on the bet in the option. Users pick the bet; the won mute is stored as a token. */
+/**
+ * The mute in the option. Users pick the bet it was won on, so the value is the bet's short ID; a granted mute
+ * has no bet, so autocomplete sends the token's own short ID (`T…`) instead. See `wonMuteValue`.
+ */
 export async function wonMuteFromOption(app: App, i: Command, name = 'bet'): Promise<TokenRow> {
+  const raw = normalizeShortId(i.options.getString(name, true));
+  if (raw.startsWith('T')) {
+    const token = await getTokenByShortId(app.db, i.guildId, raw);
+    if (!token) throw new UserError("I couldn't find that mute. Pick one from the list as you type.");
+    return token;
+  }
   const bet = await betFromOption(app, i, name);
   const token = await getTokenForBet(app.db, bet.id);
   if (!token) throw new UserError('Nobody won a mute on that bet.');
   return token;
+}
+
+/** The autocomplete value that `wonMuteFromOption` reads back. */
+export const wonMuteValue = (token: Pick<TokenRow, 'shortId'>, bet: Pick<BetRow, 'shortId'> | null) => bet?.shortId ?? token.shortId;
+
+/** Where a mute came from, in plain text (labels can't render mentions): the bet's terms, or who granted it. */
+export const wonMuteOrigin = (guild: Guild, token: Pick<TokenRow, 'grantedBy'>, bet: Pick<BetRow, 'terms'> | null) =>
+  bet ? bet.terms.split('\n')[0]! : `Granted by ${nameOf(guild, token.grantedBy ?? '')}`;
+
+/** Autocomplete for a `duration` option: the server's allowed durations matching what's typed. */
+export async function respondWithDurations(app: App, i: Autocomplete, typed: string): Promise<void> {
+  const config = await guildConfig(app, i.guildId);
+  const q = typed.toLowerCase();
+  await i.respond(config.allowedDurations.filter((d) => d.includes(q)).map((d) => ({ name: formatDuration(MUTE_DURATIONS[d]), value: d })));
 }
 
 /** Most member IDs a name search sends to the database; keeps short queries in big servers cheap. */

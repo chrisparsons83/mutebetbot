@@ -8,6 +8,7 @@ import {
   getToken,
   guildsWithQueue,
   insertMute,
+  insertToken,
   lastMuteEnd,
   lockGuild,
   logEvent,
@@ -22,8 +23,8 @@ import {
   type MuteRow,
   type TokenRow,
 } from '@mutebetbot/db';
-import { formatDuration, type MuteKind } from '@mutebetbot/shared';
-import type { Guild, GuildMember, Message, Role } from 'discord.js';
+import { formatDuration, type GuildConfig, type MuteKind } from '@mutebetbot/shared';
+import { escapeMarkdown, type Guild, type GuildMember, type Message, type Role } from 'discord.js';
 import type { App } from '../context.ts';
 import { blockerText, explain, mutedLine } from '../copy.ts';
 import { refreshBetMessage } from './bets.ts';
@@ -36,14 +37,22 @@ import {
   planResume,
   shouldCallout,
   shouldClearTimeout,
+  validateGrant,
   type Blocker,
+  type GrantMemberFacts,
   type QueueTargetFacts,
 } from '../domain/mutes.ts';
 import { fetchMember, isMutable, mention, onlyUsers, timeoutUntil, ts, tryDm, UserError } from '../discord/util.ts';
 import { ensureMarkerRole } from './guild-setup.ts';
 import { announce, guildOf } from './notify.ts';
 
-const AUDIT_REASON = 'MuteBetBot: lost a bet';
+const AUDIT_REASON = 'MuteBetBot: bet-mute';
+
+/** Where a token's bet was made, the fallback for announcements. Null for a granted token. */
+export async function betChannelId(app: App, token: Pick<TokenRow, 'betId'>): Promise<string | null> {
+  if (!token.betId) return null;
+  return (await getBet(app.db, token.betId))?.channelId ?? null;
+}
 
 function capStats(active: MuteRow[]) {
   const timeouts = active.filter((m) => m.kind === 'timeout');
@@ -260,7 +269,6 @@ export async function promoteQueue(app: App, guildId: string, now = new Date()):
     await addRole(app, members.get(mute.targetId) ?? null, role);
     app.scheduler.schedule(mute);
     trackHonor(app, mute, true);
-    const bet = await getBet(app.db, token.betId);
     const holder = await app.client.users.fetch(token.holderId).catch(() => null);
     if (holder) {
       await tryDm(holder, {
@@ -268,8 +276,8 @@ export async function promoteQueue(app: App, guildId: string, now = new Date()):
         allowedMentions: onlyUsers(),
       }).catch(() => null);
     }
-    await announce(app, guild, bet?.channelId ?? null, {
-      content: mutedLine(mute.targetId, token.holderId, mute.endsAt, mute.kind === 'honor'),
+    await announce(app, guild, await betChannelId(app, token), {
+      content: mutedLine(mute.targetId, token.holderId, mute.endsAt, mute.kind === 'honor', Boolean(token.grantedBy)),
       allowedMentions: onlyUsers(mute.targetId, token.holderId),
     });
     await refreshBetMessage(app, token.betId);
@@ -352,6 +360,53 @@ export async function adminUnmute(app: App, guildId: string, targetId: string, a
 // Won mutes (stored as tokens)
 // ---------------------------------------------------------------------------
 
+export interface GrantInput {
+  guildId: string;
+  guildName: string;
+  config: GuildConfig;
+  adminId: string;
+  holder: GrantMemberFacts;
+  target: GrantMemberFacts;
+  duration: string;
+  reason?: string | undefined;
+}
+
+/**
+ * `/mutebet grant`: issues an Available token with no bet, which then works exactly like one won on a bet.
+ * DMs the holder; `dmSent` is false when that failed, so the admin can be told. No public announcement.
+ */
+export async function grantToken(app: App, input: GrantInput, now = new Date()): Promise<{ token: TokenRow; dmSent: boolean }> {
+  const plan = validateGrant({ adminId: input.adminId, holder: input.holder, target: input.target, duration: input.duration, config: input.config, now });
+  if (!plan.ok) throw new UserError(explain(plan));
+  const reason = input.reason?.trim() || undefined;
+  const token = await app.db.transaction(async (tx) => {
+    const row = await insertToken(tx, {
+      guildId: input.guildId,
+      grantedBy: input.adminId,
+      holderId: input.holder.id,
+      targetId: input.target.id,
+      durationS: plan.durationS,
+      issuedAt: now,
+      expiresAt: plan.expiresAt,
+    });
+    if (!row) throw new Error('granted token was not inserted');
+    await logEvent(tx, { guildId: input.guildId, entity: 'token', entityId: row.id, actorId: input.adminId, type: 'granted', payload: reason ? { reason } : {} });
+    return row;
+  });
+
+  const deadline = token.expiresAt ? `Use it by ${ts(token.expiresAt, 'D')}.` : 'It never expires.';
+  const content = [
+    `${mention(input.adminId)} gave you a ${formatDuration(token.durationS)} mute on ${mention(token.targetId)} in **${escapeMarkdown(input.guildName)}**. ${deadline}`,
+    reason ? `Reason: ${escapeMarkdown(reason)}` : undefined,
+    'Use it there with `/mute use`.',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const holder = await app.client.users.fetch(token.holderId).catch(() => null);
+  const dm = holder ? await tryDm(holder, { content, allowedMentions: onlyUsers() }).catch(() => null) : null;
+  return { token, dmSent: Boolean(dm) };
+}
+
 export async function unqueueToken(app: App, token: TokenRow, actorId: string): Promise<TokenRow> {
   if (token.holderId !== actorId) throw new UserError("That isn't your mute.");
   const row = await transitionToken(app.db, token.id, 'queued', 'available', { queuedAt: null });
@@ -363,7 +418,7 @@ export async function unqueueToken(app: App, token: TokenRow, actorId: string): 
 
 export async function revokeToken(app: App, token: TokenRow, adminId: string): Promise<TokenRow> {
   if (token.holderId === adminId || token.targetId === adminId) {
-    throw new UserError("You're part of this bet, so another admin has to cancel the mute.");
+    throw new UserError("You're a party to this mute, so another admin has to cancel it.");
   }
   const row = await transitionToken(app.db, token.id, ['available', 'queued'], 'revoked', { queuedAt: null });
   if (!row) throw new UserError('Only a mute that hasn\'t been used yet can be cancelled.');
@@ -427,8 +482,7 @@ export async function onMemberJoin(app: App, member: GuildMember, now = new Date
   await logEvent(app.db, { guildId: member.guild.id, entity: 'mute', entityId: mute.id, type: 'resumed', payload: { endsAt: plan.endsAt.toISOString() } });
   app.scheduler.schedule(resumed);
   trackHonor(app, resumed, true);
-  const bet = await getBet(app.db, token.betId);
-  await announce(app, member.guild, bet?.channelId ?? null, {
+  await announce(app, member.guild, await betChannelId(app, token), {
     content: `${mention(member.id)} is back, so their bet-mute picks up again until ${ts(plan.endsAt, 't')}.`,
     allowedMentions: onlyUsers(member.id),
   });

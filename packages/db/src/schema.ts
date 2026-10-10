@@ -15,6 +15,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigserial,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -134,9 +135,10 @@ export const tokens = pgTable(
     guildId: text('guild_id')
       .notNull()
       .references(() => guilds.id, { onDelete: 'cascade' }),
-    betId: uuid('bet_id')
-      .notNull()
-      .references(() => bets.id, { onDelete: 'cascade' }),
+    /** The bet it was won on; null for a token an admin granted. */
+    betId: uuid('bet_id').references(() => bets.id, { onDelete: 'cascade' }),
+    /** The admin who granted it; null for a token won on a bet. */
+    grantedBy: text('granted_by'),
     holderId: text('holder_id').notNull(),
     targetId: text('target_id').notNull(),
     durationS: integer('duration_s').notNull(),
@@ -148,7 +150,10 @@ export const tokens = pgTable(
   },
   (t) => [
     uniqueIndex('tokens_guild_short_id_uq').on(t.guildId, t.shortId),
+    // Postgres allows many NULLs here, so granted tokens don't collide.
     uniqueIndex('tokens_bet_uq').on(t.betId),
+    // A token comes from a bet or a grant, never both.
+    check('tokens_one_origin_ck', sql`(${t.betId} is null) <> (${t.grantedBy} is null)`),
     index('tokens_holder_idx').on(t.guildId, t.holderId, t.status),
     index('tokens_queue_idx')
       .on(t.guildId, t.queuedAt)

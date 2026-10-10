@@ -4,6 +4,7 @@ import {
   countProposedByChallenger,
   expireTokens,
   getGuild,
+  getTokenByShortId,
   insertBet,
   insertClaim,
   insertMute,
@@ -61,7 +62,7 @@ describe.runIf(hasTestDb)('db queries (integration)', () => {
     const { guildId, a, b, bet } = await setup();
     await insertToken(db, { guildId, betId: bet.id, holderId: a, targetId: b, durationS: 3600, issuedAt: new Date(), expiresAt: null });
     const rows = await listWonMutes(db, guildId, { holderId: a, statuses: ['available'] });
-    expect(rows.map((r) => [r.bet.terms, r.token.targetId])).toEqual([['Rain tomorrow', b]]);
+    expect(rows.map((r) => [r.bet?.terms, r.token.targetId])).toEqual([['Rain tomorrow', b]]);
     expect(await listWonMutes(db, guildId, { holderId: b, statuses: ['available'] })).toEqual([]);
   });
 
@@ -118,6 +119,33 @@ describe.runIf(hasTestDb)('db queries (integration)', () => {
     const token = await insertToken(db, values);
     expect(token?.shortId).toMatch(/^T/);
     expect(await insertToken(db, values)).toBeUndefined();
+  });
+
+  it('issues any number of granted tokens, each from exactly one origin', async () => {
+    const { guildId, a, b, bet } = await setup();
+    const admin = snowflake();
+    const granted = { guildId, grantedBy: admin, holderId: a, targetId: b, durationS: 1800, expiresAt: null };
+    const t1 = await insertToken(db, granted);
+    const t2 = await insertToken(db, granted);
+    expect(t1).toMatchObject({ betId: null, grantedBy: admin, status: 'available' });
+    expect(t2?.id).not.toBe(t1?.id);
+    expect(await getTokenByShortId(db, guildId, t1!.shortId)).toMatchObject({ id: t1!.id });
+
+    // Neither origin, or both, is refused by the check constraint.
+    await expect(insertToken(db, { ...granted, grantedBy: null })).rejects.toThrow();
+    await expect(insertToken(db, { ...granted, betId: bet.id })).rejects.toThrow();
+  });
+
+  it('lists granted mutes without a bet and finds them by short ID or name', async () => {
+    const { guildId, a, b } = await setup();
+    const token = (await insertToken(db, { guildId, grantedBy: snowflake(), holderId: a, targetId: b, durationS: 1800, expiresAt: null }))!;
+    const rows = await listWonMutes(db, guildId, { holderId: a, statuses: ['available'] });
+    expect(rows).toEqual([{ token, bet: null }]);
+    const search = async (query: string, userIds: string[] = []) =>
+      (await listWonMutes(db, guildId, { statuses: ['available'], query, userIds })).map((r) => r.token.id);
+    expect(await search(token.shortId)).toEqual([token.id]);
+    expect(await search('someone', [b])).toEqual([token.id]);
+    expect(await search('nothing')).toEqual([]);
   });
 
   it('expires available tokens but never queued ones', async () => {

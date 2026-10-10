@@ -7,7 +7,7 @@ import {
   searchBets,
   setBetMessage,
 } from '@mutebetbot/db';
-import { formatDuration, MUTE_DURATIONS, OPEN_BET_STATUSES, type BetStatus } from '@mutebetbot/shared';
+import { formatDuration, OPEN_BET_STATUSES, type BetStatus } from '@mutebetbot/shared';
 import { EmbedBuilder, MessageFlags } from 'discord.js';
 import type { App } from '../context.ts';
 import { explain } from '../copy.ts';
@@ -15,7 +15,16 @@ import { validateCreate, type MemberFacts } from '../domain/bets.ts';
 import { COLORS, renderBetInfo, renderBetMessage, STATUS_LABEL } from '../discord/render.ts';
 import { betClaim, clip, isMutable, mention, nameOf, onlyUsers, theBet, UserError } from '../discord/util.ts';
 import { betCardExtra, cancelBet, refreshBetMessage, respondToClaim, submitClaim } from '../services/bets.ts';
-import { betChoiceLabel, betFromOption, guildConfig, memberIdsMatching, type Autocomplete, type Command, type CommandModule } from './common.ts';
+import {
+  betChoiceLabel,
+  betFromOption,
+  guildConfig,
+  memberIdsMatching,
+  respondWithDurations,
+  type Autocomplete,
+  type Command,
+  type CommandModule,
+} from './common.ts';
 
 const PAGE_SIZE = 10;
 
@@ -146,15 +155,7 @@ const AUTOCOMPLETE_SCOPE: Record<string, { statuses?: BetStatus[]; mine: boolean
 
 async function autocomplete(app: App, i: Autocomplete) {
   const focused = i.options.getFocused(true);
-  if (focused.name === 'duration') {
-    const config = await guildConfig(app, i.guildId);
-    const q = focused.value.toLowerCase();
-    return i.respond(
-      config.allowedDurations
-        .filter((d) => d.includes(q))
-        .map((d) => ({ name: formatDuration(MUTE_DURATIONS[d]), value: d })),
-    );
-  }
+  if (focused.name === 'duration') return respondWithDurations(app, i, focused.value);
   const scope = AUTOCOMPLETE_SCOPE[i.options.getSubcommand()] ?? { mine: false };
   const bets = await searchBets(app.db, i.guildId, {
     query: focused.value,

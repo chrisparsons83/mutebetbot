@@ -14,6 +14,8 @@ import {
   shouldClearTimeout,
   timerDelayMs,
   tokenExpiresAt,
+  validateGrant,
+  type GrantInput,
   type MuteTiming,
   type QueueTargetFacts,
   type RedeemInput,
@@ -47,6 +49,47 @@ describe('tokens', () => {
     expect(isTokenExpired({ status: 'available', expiresAt: at(-1) }, NOW)).toBe(true);
     expect(isTokenExpired({ status: 'queued', expiresAt: at(-1) }, NOW)).toBe(false);
     expect(isTokenExpired({ status: 'available', expiresAt: null }, NOW)).toBe(false);
+  });
+});
+
+describe('validateGrant (/mutebet grant)', () => {
+  const member = (id: string) => ({ id, isBot: false, inGuild: true, mutable: true });
+  const grant = (over: Partial<GrantInput> = {}, config: Partial<GuildConfig> = {}): GrantInput => ({
+    adminId: 'admin',
+    holder: member('holder'),
+    target: member('target'),
+    duration: '30m',
+    config: { ...DEFAULT_CONFIG, ...config },
+    now: NOW,
+    ...over,
+  });
+
+  it('issues the duration with expiry snapshotted from config', () => {
+    expect(validateGrant(grant({}, { tokenExpiry: '7d' }))).toEqual({ ok: true, durationS: 1800, expiresAt: at(7 * 24) });
+    expect(validateGrant(grant({}, { tokenExpiry: 'never' }))).toMatchObject({ ok: true, expiresAt: null });
+  });
+
+  it('refuses self-targeting, bots, the granting admin as holder, and absent members', () => {
+    expect(validateGrant(grant({ target: member('holder') }))).toMatchObject({ error: 'self_grant' });
+    expect(validateGrant(grant({ target: { ...member('target'), isBot: true } }))).toMatchObject({ error: 'bot_grant' });
+    expect(validateGrant(grant({ holder: { ...member('holder'), isBot: true } }))).toMatchObject({ error: 'bot_grant' });
+    expect(validateGrant(grant({ holder: member('admin') }))).toMatchObject({ error: 'grant_to_self' });
+    expect(validateGrant(grant({ target: member('admin') })).ok).toBe(true);
+    expect(validateGrant(grant({ target: { ...member('target'), inGuild: false } }))).toMatchObject({ error: 'grant_not_member', userId: 'target' });
+  });
+
+  it('only allows configured durations and refuses while disabled', () => {
+    expect(validateGrant(grant({ duration: '24h' }, { allowedDurations: ['30m'] }))).toMatchObject({ error: 'duration_not_allowed' });
+    expect(validateGrant(grant({ duration: 'forever' }))).toMatchObject({ error: 'duration_not_allowed' });
+    expect(validateGrant(grant({}, { enabled: false }))).toMatchObject({ error: 'disabled' });
+  });
+
+  it('an unmutable target is an honor mute, or refused when the server rejects those', () => {
+    const target = { ...member('target'), mutable: false };
+    expect(validateGrant(grant({ target }, { unmutableMembers: 'honor' })).ok).toBe(true);
+    expect(validateGrant(grant({ target }, { unmutableMembers: 'reject' }))).toMatchObject({ error: 'unmutable_target' });
+    // The holder is never muted, so their authority doesn't matter.
+    expect(validateGrant(grant({ holder: { ...member('holder'), mutable: false } }, { unmutableMembers: 'reject' })).ok).toBe(true);
   });
 });
 

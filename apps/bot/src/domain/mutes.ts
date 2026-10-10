@@ -1,5 +1,7 @@
 import {
   HONOR_CALLOUT_INTERVAL_S,
+  isMuteDurationKey,
+  MUTE_DURATIONS,
   TOKEN_EXPIRY,
   type GuildConfig,
   type MuteKind,
@@ -30,6 +32,45 @@ export function tokenExpiresAt(issuedAt: Date, expiry: TokenExpiryKey): Date | n
 /** Lazy expiry: an Available token past its expiry is expired even before the sweep marks it. */
 export function isTokenExpired(token: Pick<TokenState, 'status' | 'expiresAt'>, now: Date): boolean {
   return token.status === 'available' && token.expiresAt !== null && token.expiresAt <= now;
+}
+
+// ---------------------------------------------------------------------------
+// Admin grant
+// ---------------------------------------------------------------------------
+
+/** What the bot knows about the holder or target of a grant. */
+export interface GrantMemberFacts {
+  id: string;
+  isBot: boolean;
+  inGuild: boolean;
+  /** False for admins, the owner, and anyone at or above the bot's top role. */
+  mutable: boolean;
+}
+
+export interface GrantInput {
+  adminId: string;
+  holder: GrantMemberFacts;
+  target: GrantMemberFacts;
+  duration: string;
+  config: GuildConfig;
+  now: Date;
+}
+
+/** `/mutebet grant`: the same member and duration rules as `/bet create`, applied to holder and target. */
+export function validateGrant(input: GrantInput) {
+  const { adminId, holder, target, config, now } = input;
+  if (!config.enabled) return err('disabled');
+  if (holder.id === target.id) return err('self_grant');
+  if (holder.isBot || target.isBot) return err('bot_grant');
+  // Like ruling or revoking, an admin can't hand themselves a mute.
+  if (holder.id === adminId) return err('grant_to_self');
+  for (const m of [holder, target]) if (!m.inGuild) return err('grant_not_member', { userId: m.id });
+  if (!isMuteDurationKey(input.duration) || !config.allowedDurations.includes(input.duration)) {
+    return err('duration_not_allowed', { allowed: config.allowedDurations });
+  }
+  // Only the target can end up muted. If they can't be timed out, it becomes an honor mute unless that's off.
+  if (!target.mutable && config.unmutableMembers === 'reject') return err('unmutable_target', { userId: target.id });
+  return ok({ durationS: MUTE_DURATIONS[input.duration], expiresAt: tokenExpiresAt(now, config.tokenExpiry) });
 }
 
 // ---------------------------------------------------------------------------

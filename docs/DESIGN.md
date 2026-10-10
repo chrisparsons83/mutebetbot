@@ -24,7 +24,7 @@ MuteBetBot is a public Discord bot where two members wager *time*, not money: th
 
 ## Core concepts and bet lifecycle
 
-There are three records: a **bet** (the agreement), a **mute token** (what the winner earns), and a **mute** (a token being spent). "Token" is an internal name only: users see "the mute you won", and every command picks it by its bet. Each has its own state machine, and every transition is a single guarded database update so double-clicks and races can't apply twice.
+There are three records: a **bet** (the agreement), a **mute token** (what the winner earns), and a **mute** (a token being spent). "Token" is an internal name only: users see "the mute you won", and every command picks it by its bet (or, for a mute an admin granted, by who it targets and who granted it). Each has its own state machine, and every transition is a single guarded database update so double-clicks and races can't apply twice.
 
 ```mermaid
 stateDiagram-v2
@@ -44,11 +44,12 @@ stateDiagram-v2
     Resolved --> [*]: token issued to winner
 ```
 
-A resolved bet issues one mute token to the winner, bound to the loser and to the bet's duration. A void bet issues nothing.
+A resolved bet issues one mute token to the winner, bound to the loser and to the bet's duration. A void bet issues nothing. An admin can also issue a token directly with `/mutebet grant`. Every token comes from exactly one of the two: a bet (`bet_id`) or a grant (`granted_by`).
 
 ```mermaid
 stateDiagram-v2
     [*] --> Available: bet resolved
+    [*] --> Available: admin grants
     Available --> Active: Mute button or /mute use (slot free)
     Available --> Queued: Wait in line or /mute use queue:true<br/>(server at cap)
     Queued --> Active: a slot frees
@@ -67,14 +68,15 @@ stateDiagram-v2
 - Both parties must click **🤝 Accept** on the proposal, the challenger included. Running `/bet create` alone is not a handshake.
 - Proposed bets expire 48 h after creation. This window is system-wide, not configurable.
 - Active bets have no time limit. A bet on a month-long season or a year-long prediction just stays Active until someone claims a result.
-- A token always targets the bet's loser. The winner chooses *when*, never *who* or *how long*.
+- A token from a bet always targets the bet's loser. A granted token targets whoever the admin picked. Either way the holder chooses *when*, never *who* or *how long*.
+- Once issued, a granted token follows every rule a won one does: cap and queue, target cooldown, honor mutes, expiry, unqueue, and revoke.
 - The duration is fixed when the bet is created, so both sides know the stakes before shaking.
 - Expiry and duration rules are snapshotted onto the token at issue time. Later config changes don't retroactively alter tokens people already hold. Queued tokens don't expire while they wait.
 - Tokens are scoped to one server and are not transferable.
 
 ## Slash commands
 
-Slash commands are guild-only. Bets and tokens have short IDs (e.g. `B7K2`, `T9QX`), but users never see them: options pick a bet from autocomplete, searched by either party's name or the prediction, and the short ID is only the value sent back. Replies about a user's own state are ephemeral; bet proposals, resolutions, and mutes post publicly in the channel or the configured announce channel.
+Slash commands are guild-only. Bets and tokens have short IDs (e.g. `B7K2`, `T9QX`), but users never see them: options pick a bet from autocomplete, searched by either party's name or the prediction, and the short ID is only the value sent back. A granted mute has no bet, so its autocomplete entry sends the token's short ID instead. Replies about a user's own state are ephemeral; bet proposals, resolutions, and mutes post publicly in the channel or the configured announce channel.
 
 **Member commands**
 
@@ -101,7 +103,8 @@ Slash commands are guild-only. Bets and tokens have short IDs (e.g. `B7K2`, `T9Q
 | --- | --- | --- |
 | `/mutebet rule` | `bet`, `winner` or `void` | Resolves or voids any Active or Disputed bet immediately. |
 | `/mutebet unmute` | `user` | Ends a bet-mute early: clears the timeout and removes the role. |
-| `/mutebet revoke` | `bet` | Cancels a won mute that hasn't been used. |
+| `/mutebet grant` | `holder`, `target`, `duration` (autocomplete from `allowed_durations`), `reason` (optional) | Gives `holder` an Available token on `target`, with expiry snapshotted from `mute_expiry`. The holder can't be the target, the granting admin, or a bot, and the target can't be a bot. An unmutable target becomes an honor mute, or is refused if `unmutable_members = reject`. Refused while the bot is disabled. The holder is DM'd (who granted it, the target, duration, expiry, and reason). There's no public post. Logged as a `granted` token event with the reason. |
+| `/mutebet revoke` | `bet` | Cancels a mute (won or granted) that hasn't been used. |
 | `/mutebet config view` | — | Shows current settings. |
 | `/mutebet config set` | one option per setting | Updates settings (see Server configuration). |
 | `/mutebet repair` | — | Recreates the marker role if missing and reports permission and hierarchy problems. |
@@ -247,7 +250,7 @@ Five Postgres tables plus an append-only event log. Discord IDs are stored as `t
 | `guilds` | `id`, `marker_role_id`, `installed_at`, `removed_at`, config columns from Server configuration | One row per server; row-locked during redemption and queue promotion. |
 | `bets` | `id`, `short_id`, `guild_id`, `challenger_id`, `opponent_id`, `terms`, `duration_s`, `status`, `channel_id`, `message_id`, `challenger_accepted_at`, `opponent_accepted_at`, `accept_by` (created + 48 h), `winner_id`, `resolved_by`, `resolved_at` | `short_id` unique per guild. Partial index on Proposed status for the per-user proposal limit. |
 | `bet_claims` | `id`, `bet_id`, `claimant_id`, `kind` (win/lose/void), `status`, `respond_by`, `responder_id`, `reason`, `dm_message_id` | At most one open claim per bet (partial unique index). `dm_message_id` lets the bot disable the DM buttons once answered. |
-| `tokens` | `id`, `short_id`, `guild_id`, `bet_id`, `holder_id`, `target_id`, `duration_s`, `status`, `issued_at`, `expires_at` (nullable = never), `queued_at` | Statuses: available, queued, active, completed, expired, revoked. Queue order is `queued_at`. |
+| `tokens` | `id`, `short_id`, `guild_id`, `bet_id` (nullable), `granted_by` (nullable), `holder_id`, `target_id`, `duration_s`, `status`, `issued_at`, `expires_at` (nullable = never), `queued_at` | Statuses: available, queued, active, completed, expired, revoked. Queue order is `queued_at`. A check constraint requires exactly one of `bet_id` and `granted_by`; `bet_id` stays unique (Postgres allows many NULLs). Autocomplete sends a granted token's `short_id`, since it has no bet. |
 | `mutes` | `id`, `guild_id`, `token_id`, `target_id`, `kind` (timeout/honor), `starts_at`, `ends_at`, `status` (active/paused/completed), `remaining_s`, `timeout_set_to`, `last_callout_at`, `lifted_by` | `timeout_set_to` records the exact value the bot wrote, so it never clears someone else's timeout. `remaining_s` is set when paused. |
 | `events` | `id`, `guild_id`, `entity`, `entity_id`, `actor_id`, `type`, `payload` (jsonb), `at` | Audit trail for `/bet info` and debugging. |
 
