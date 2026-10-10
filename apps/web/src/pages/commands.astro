@@ -45,12 +45,12 @@ const sections = COMMANDS.map((cmd) => {
 });
 
 const describe = (o: Opt) =>
-  `${o.description}${o.choices?.length ? ` (${o.choices.map((c) => c.value).join(', ')})` : ''}${o.required ? '' : ' · optional'}`;
+  `${o.description}${o.choices?.length ? ` (${o.choices.map((c) => c.value).join(', ')})` : ''}${o.required ? '' : ' (optional)'}`;
 ---
 
 <Base title="Commands" description="Every MuteBetBot slash command and its options.">
   <h1>Commands</h1>
-  <p class="lead">All commands work inside a server. Bets and tokens have short IDs like <code>B7K2</code> and <code>T9QX</code>, with autocomplete.</p>
+  <p class="lead">All commands work inside a server. When a command needs a bet, start typing a name or part of the prediction and pick it from the list.</p>
   {
     sections.map((s) => (
       <section>

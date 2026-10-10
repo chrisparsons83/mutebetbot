@@ -101,13 +101,28 @@ export async function listBets(
   return { rows, total: totalRow?.n ?? 0 };
 }
 
-/** Bets for autocomplete: matching short-ID prefix, optionally limited to a party and statuses. */
+/**
+ * Autocomplete search. Matches the typed text against the short ID, the terms, or either
+ * party (callers resolve names to `userIds`, since names aren't stored).
+ */
 export async function searchBets(
   db: DbOrTx,
   guildId: string,
-  opts: { prefix: string; partyId?: string | undefined; statuses?: readonly BetStatus[] | undefined; limit?: number },
+  opts: {
+    query: string;
+    userIds?: readonly string[];
+    partyId?: string | undefined;
+    statuses?: readonly BetStatus[] | undefined;
+    limit?: number;
+  },
 ): Promise<BetRow[]> {
-  const conds: SQL[] = [eq(bets.guildId, guildId), ilike(bets.shortId, `${opts.prefix.replace(/[%_\\]/g, '')}%`)];
+  const conds: SQL[] = [eq(bets.guildId, guildId)];
+  const q = opts.query.trim().replace(/[%_\\]/g, '');
+  if (q) {
+    const match: SQL[] = [ilike(bets.shortId, `${q}%`), ilike(bets.terms, `%${q}%`)];
+    if (opts.userIds?.length) match.push(inArray(bets.challengerId, [...opts.userIds]), inArray(bets.opponentId, [...opts.userIds]));
+    conds.push(or(...match)!);
+  }
   if (opts.partyId) conds.push(or(eq(bets.challengerId, opts.partyId), eq(bets.opponentId, opts.partyId))!);
   if (opts.statuses?.length) conds.push(inArray(bets.status, [...opts.statuses]));
   return db

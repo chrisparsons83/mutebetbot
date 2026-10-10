@@ -1,7 +1,6 @@
 import {
   countProposedByChallenger,
   eventsFor,
-  getTokenForBet,
   insertBet,
   listBets,
   logEvent,
@@ -14,9 +13,9 @@ import type { App } from '../context.ts';
 import { explain } from '../copy.ts';
 import { validateCreate, type MemberFacts } from '../domain/bets.ts';
 import { COLORS, renderBetInfo, renderBetMessage, STATUS_LABEL } from '../discord/render.ts';
-import { isMutable, mention, onlyUsers, UserError } from '../discord/util.ts';
-import { cancelBet, refreshBetMessage, respondToClaim, submitClaim } from '../services/bets.ts';
-import { betFromOption, clip, guildConfig, nameOf, type Autocomplete, type Command, type CommandModule } from './common.ts';
+import { betClaim, clip, isMutable, mention, nameOf, onlyUsers, theBet, UserError } from '../discord/util.ts';
+import { betCardExtra, cancelBet, refreshBetMessage, respondToClaim, submitClaim } from '../services/bets.ts';
+import { betChoiceLabel, betFromOption, guildConfig, memberIdsMatching, type Autocomplete, type Command, type CommandModule } from './common.ts';
 
 const PAGE_SIZE = 10;
 
@@ -40,7 +39,7 @@ async function create(app: App, i: Command) {
   const plan = validateCreate({
     challenger: facts(i.user.id, false, i.member),
     opponent: facts(opponentUser.id, opponentUser.bot, opponentMember),
-    terms: i.options.getString('terms', true),
+    terms: i.options.getString('prediction', true),
     duration: i.options.getString('duration', true),
     config,
     openProposals: await countProposedByChallenger(app.db, i.guildId, i.user.id),
@@ -80,20 +79,20 @@ async function list(app: App, i: Command) {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const lines = rows.map(
     (b) =>
-      `**${b.shortId}** · ${STATUS_LABEL[b.status]} · ${mention(b.challengerId)} vs ${mention(b.opponentId)} · ${formatDuration(b.durationS)} · “${clip(b.terms, 60)}”`,
+      `${mention(b.challengerId)} bets that ${clip(betClaim(b.terms), 80)}\nAgainst ${mention(b.opponentId)} for ${formatDuration(b.durationS)}, ${STATUS_LABEL[b.status].toLowerCase()}`,
   );
   const embed = new EmbedBuilder()
     .setTitle(user ? `Bets involving ${nameOf(i.guild, user.id)}` : 'Bets')
-    .setDescription(lines.join('\n') || 'No bets found.')
-    .setFooter({ text: `Page ${Math.min(page, pages)} of ${pages} · ${total} total` })
+    .setDescription(lines.join('\n\n') || 'No bets found.')
+    .setFooter({ text: `Page ${Math.min(page, pages)} of ${pages}, ${total} ${total === 1 ? 'bet' : 'bets'} in all` })
     .setColor(COLORS.proposed);
   await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() });
 }
 
 async function info(app: App, i: Command) {
   const bet = await betFromOption(app, i);
-  const [history, token] = await Promise.all([eventsFor(app.db, 'bet', bet.id), getTokenForBet(app.db, bet.id)]);
-  await i.reply({ embeds: [renderBetInfo(bet, history, token)], flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() });
+  const [history, extra] = await Promise.all([eventsFor(app.db, 'bet', bet.id), betCardExtra(app, bet)]);
+  await i.reply({ embeds: [renderBetInfo(bet, history, extra)], flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() });
 }
 
 async function execute(app: App, i: Command) {
@@ -108,7 +107,7 @@ async function execute(app: App, i: Command) {
     case 'cancel': {
       const bet = await cancelBet(app, await betFromOption(app, i), i.user.id);
       await refreshBetMessage(app, bet.id);
-      return void (await i.reply({ content: `Bet **${bet.shortId}** cancelled.`, flags: MessageFlags.Ephemeral }));
+      return void (await i.reply({ content: `Cancelled ${theBet(bet.terms)}.`, flags: MessageFlags.Ephemeral }));
     }
     case 'resolve':
     case 'void': {
@@ -116,9 +115,9 @@ async function execute(app: App, i: Command) {
       await i.deferReply({ flags: MessageFlags.Ephemeral });
       const r = await submitClaim(app, await betFromOption(app, i), i.user.id, kind);
       const msg = {
-        opened: `Sent to the other party to confirm. They have until the confirm window ends; otherwise ${kind === 'void' ? 'the bet stays on' : 'an admin rules'}.`,
+        opened: `Sent to the other party to confirm. If they don't answer in time, ${kind === 'void' ? 'the bet stays on' : 'an admin decides'}.`,
         resolved: 'They had already said the same thing, so the bet is settled.',
-        disputed: 'They had claimed the opposite, so the bet is now disputed and admins have been notified.',
+        disputed: 'They had claimed the opposite, so the bet is disputed. Admins have been told.',
       }[r.kind];
       return void (await i.editReply(msg));
     }
@@ -127,7 +126,7 @@ async function execute(app: App, i: Command) {
       await i.deferReply({ flags: MessageFlags.Ephemeral });
       const reason = sub === 'dispute' ? (i.options.getString('reason') ?? undefined) : undefined;
       const r = await respondToClaim(app, await betFromOption(app, i), i.user.id, sub, reason);
-      const msg = { resolved: 'Confirmed. The bet is settled.', disputed: 'Disputed. Admins have been notified.', opened: 'Done. The bet stays on.' }[r.kind];
+      const msg = { resolved: 'Confirmed. The bet is settled.', disputed: 'Disputed. Admins have been told.', opened: 'The bet stays on.' }[r.kind];
       return void (await i.editReply(msg));
     }
     default:
@@ -153,21 +152,17 @@ async function autocomplete(app: App, i: Autocomplete) {
     return i.respond(
       config.allowedDurations
         .filter((d) => d.includes(q))
-        .map((d) => ({ name: `${formatDuration(MUTE_DURATIONS[d])}`, value: d })),
+        .map((d) => ({ name: formatDuration(MUTE_DURATIONS[d]), value: d })),
     );
   }
   const scope = AUTOCOMPLETE_SCOPE[i.options.getSubcommand()] ?? { mine: false };
   const bets = await searchBets(app.db, i.guildId, {
-    prefix: focused.value.trim().toUpperCase(),
+    query: focused.value,
+    userIds: memberIdsMatching(i.guild, focused.value),
     partyId: scope.mine ? i.user.id : undefined,
     statuses: scope.statuses,
   });
-  await i.respond(
-    bets.map((b) => ({
-      name: clip(`${b.shortId} · ${nameOf(i.guild, b.challengerId)} vs ${nameOf(i.guild, b.opponentId)} · ${b.terms}`, 100),
-      value: b.shortId,
-    })),
-  );
+  await i.respond(bets.map((b) => ({ name: betChoiceLabel(i.guild, b), value: b.shortId })));
 }
 
 export const betCommand: CommandModule = { name: 'bet', execute, autocomplete };

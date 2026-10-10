@@ -1,4 +1,4 @@
-import { logEvent, markGuildRemoved, runningMutesForGuild, searchBets, searchTokens, setMarkerRole, toGuildConfig, updateGuildConfig } from '@mutebetbot/db';
+import { listWonMutes, logEvent, markGuildRemoved, runningMutesForGuild, searchBets, setMarkerRole, toGuildConfig, updateGuildConfig } from '@mutebetbot/db';
 import { formatDuration, type GuildConfig } from '@mutebetbot/shared';
 import { EmbedBuilder, MessageFlags } from 'discord.js';
 import type { App } from '../context.ts';
@@ -7,16 +7,28 @@ import { planAdminRule } from '../domain/bets.ts';
 import { parseConfigSet } from '../domain/config.ts';
 import { isBotAdmin } from '../domain/members.ts';
 import { COLORS } from '../discord/render.ts';
-import { memberAuthority, mention, onlyUsers, UserError } from '../discord/util.ts';
+import { memberAuthority, mention, nameOf, onlyUsers, theBet, UserError } from '../discord/util.ts';
+import { isTokenExpired } from '../domain/mutes.ts';
 import { adminRule } from '../services/bets.ts';
 import { buildSetupReport, ensureMarkerRole, setupEmbed } from '../services/guild-setup.ts';
 import { adminUnmute, finalizeMute, revokeToken } from '../services/mutes.ts';
-import { betFromOption, clip, guildConfig, guildRow, nameOf, tokenFromOption, type Autocomplete, type Command, type CommandModule } from './common.ts';
+import {
+  betChoiceLabel,
+  betFromOption,
+  guildConfig,
+  guildRow,
+  memberIdsMatching,
+  withTerms,
+  wonMuteFromOption,
+  type Autocomplete,
+  type Command,
+  type CommandModule,
+} from './common.ts';
 
 function describeConfig(c: GuildConfig): string {
   return [
     `**max_concurrent_mutes:** ${c.maxConcurrentMutes}`,
-    `**token_expiry:** ${c.tokenExpiry}`,
+    `**mute_expiry:** ${c.tokenExpiry}`,
     `**allowed_durations:** ${c.allowedDurations.join(', ')}`,
     `**confirm_window:** ${formatDuration(c.confirmWindowS)}`,
     `**target_cooldown:** ${c.targetCooldownS ? formatDuration(c.targetCooldownS) : 'none'}`,
@@ -38,14 +50,17 @@ async function rule(app: App, i: Command) {
   if (!plan.ok) throw new UserError(explain(plan));
   await i.deferReply({ flags: MessageFlags.Ephemeral });
   const r = await adminRule(app, bet, i.user.id, plan.outcome);
-  await i.editReply(r.bet.status === 'void' ? `Bet **${bet.shortId}** voided.` : `Bet **${bet.shortId}** resolved for ${mention(r.bet.winnerId!)}.`);
+  await i.editReply({
+    content: r.bet.status === 'void' ? `Called off ${theBet(bet.terms)}.` : `Settled ${theBet(bet.terms)}. ${mention(r.bet.winnerId!)} won.`,
+    allowedMentions: onlyUsers(),
+  });
 }
 
 async function configSet(app: App, i: Command) {
   const o = i.options;
   const { patch, errors } = parseConfigSet({
     max_concurrent_mutes: o.getInteger('max_concurrent_mutes'),
-    token_expiry: o.getString('token_expiry'),
+    mute_expiry: o.getString('mute_expiry'),
     allowed_durations: o.getString('allowed_durations'),
     confirm_window: o.getString('confirm_window'),
     target_cooldown: o.getString('target_cooldown'),
@@ -64,7 +79,7 @@ async function configSet(app: App, i: Command) {
   await logEvent(app.db, { guildId: i.guildId, entity: 'guild', entityId: i.guildId, actorId: i.user.id, type: 'config_changed', payload: patch });
   const embed = new EmbedBuilder()
     .setTitle('Settings updated')
-    .setDescription(`${describeConfig(toGuildConfig(row!))}\n\nChanges apply to new bets and tokens; existing ones keep their terms.`)
+    .setDescription(`${describeConfig(toGuildConfig(row!))}\n\nBets already made, and mutes already won, keep the settings they started with.`)
     .setColor(COLORS.active);
   await i.reply({ embeds: [embed], flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() });
 }
@@ -90,14 +105,15 @@ async function uninstall(app: App, i: Command) {
   }
   await markGuildRemoved(app.db, i.guildId);
   await logEvent(app.db, { guildId: i.guildId, entity: 'guild', entityId: i.guildId, actorId: i.user.id, type: 'uninstalled' });
-  await i.editReply(`Lifted ${running.length} bet-mute(s) and removed the marker role. Goodbye! Data is kept for 30 days in case you re-add the bot.`);
+  const lifted = running.length === 1 ? '1 bet-mute' : `${running.length} bet-mutes`;
+  await i.editReply(`Lifted ${lifted} and removed the marker role. Server data is kept for 30 days in case you add the bot back.`);
   await i.guild.leave();
 }
 
 async function execute(app: App, i: Command) {
   const config = await guildConfig(app, i.guildId);
   if (!isBotAdmin(memberAuthority(i.member), config.adminRoleId)) {
-    throw new UserError('Admin commands need **Manage Server** or the configured admin role.');
+    throw new UserError('Admin commands need Manage Server or the configured admin role.');
   }
   const group = i.options.getSubcommandGroup();
   const sub = i.options.getSubcommand();
@@ -118,8 +134,8 @@ async function execute(app: App, i: Command) {
       return void (await i.editReply({ content: `Lifted ${mention(user.id)}'s bet-mute.`, allowedMentions: onlyUsers() }));
     }
     case 'revoke': {
-      const token = await revokeToken(app, await tokenFromOption(app, i), i.user.id);
-      return void (await i.reply({ content: `Token **${token.shortId}** revoked.`, flags: MessageFlags.Ephemeral }));
+      const token = await revokeToken(app, await wonMuteFromOption(app, i), i.user.id);
+      return void (await i.reply({ content: `Cancelled ${mention(token.holderId)}'s mute on ${mention(token.targetId)}.`, flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() }));
     }
     case 'repair':
       return repair(app, i);
@@ -131,17 +147,27 @@ async function execute(app: App, i: Command) {
 }
 
 async function autocomplete(app: App, i: Autocomplete) {
-  const prefix = i.options.getFocused().trim().toUpperCase();
+  const query = i.options.getFocused();
   if (i.options.getSubcommand() === 'revoke') {
-    const rows = await searchTokens(app.db, i.guildId, { prefix, statuses: ['available', 'queued'] });
+    const now = new Date();
+    const rows = await listWonMutes(app.db, i.guildId, { statuses: ['available', 'queued'], query, userIds: memberIdsMatching(i.guild, query) });
     return i.respond(
-      rows.map((t) => ({ name: clip(`${t.shortId} · ${nameOf(i.guild, t.holderId)} → ${nameOf(i.guild, t.targetId)} · ${t.status}`, 100), value: t.shortId })),
+      rows
+        .filter(({ token }) => !isTokenExpired(token, now))
+        .map(({ token, bet }) => {
+          const waiting = token.status === 'queued' ? ', waiting' : '';
+          const head = `${nameOf(i.guild, token.holderId)} can mute ${nameOf(i.guild, token.targetId)}${waiting}`;
+          return { name: withTerms(head, bet.terms), value: bet.shortId };
+        })
+        .slice(0, 25),
     );
   }
-  const bets = await searchBets(app.db, i.guildId, { prefix, statuses: ['active', 'claim_pending', 'disputed'] });
-  await i.respond(
-    bets.map((b) => ({ name: clip(`${b.shortId} · ${nameOf(i.guild, b.challengerId)} vs ${nameOf(i.guild, b.opponentId)} · ${b.terms}`, 100), value: b.shortId })),
-  );
+  const bets = await searchBets(app.db, i.guildId, {
+    query,
+    userIds: memberIdsMatching(i.guild, query),
+    statuses: ['active', 'claim_pending', 'disputed'],
+  });
+  await i.respond(bets.map((b) => ({ name: betChoiceLabel(i.guild, b), value: b.shortId })));
 }
 
 export const mutebetCommand: CommandModule = { name: 'mutebet', execute, autocomplete };

@@ -85,22 +85,31 @@ export function buildSetupReport(guild: Guild, markerRole: Role | null): SetupRe
 }
 
 export function setupEmbed(report: SetupReport, title = 'MuteBetBot is ready'): EmbedBuilder {
-  const lines: string[] = [];
-  if (report.missing.length) lines.push(`⚠️ **Missing permissions:** ${report.missing.join(', ')}.`);
-  else lines.push('✅ Permissions look good.');
-  if (report.missingOptional.length) lines.push(`ℹ️ Optional: ${report.missingOptional.join(', ')}.`);
-  if (!report.markerRole) lines.push('⚠️ The marker role could not be created. Grant **Manage Roles**, then run `/mutebet repair`.');
-  else if (report.markerRoleAboveBot) lines.push(`⚠️ ${report.markerRole.toString()} sits above my role, so I can't assign it. Move it below my role.`);
-  else lines.push(`✅ Marker role: ${report.markerRole.toString()} (rename or restyle it freely).`);
+  const permissions = report.missing.length ? `Missing: ${report.missing.join(', ')}.` : 'All set.';
+  const optional = report.missingOptional.length ? `\nOptional, not granted: ${report.missingOptional.join(', ')}.` : '';
+  const marker = !report.markerRole
+    ? "I couldn't create it. Grant Manage Roles, then run `/mutebet repair`."
+    : report.markerRoleAboveBot
+      ? `${report.markerRole.toString()} sits above my role, so I can't assign it. Move it below my role.`
+      : `${report.markerRole.toString()}. Rename or restyle it however you like.`;
+  const fields = [
+    { name: 'Permissions', value: permissions + optional },
+    { name: 'Marker role', value: marker },
+  ];
   if (report.rolesAboveBot.length) {
     const names = report.rolesAboveBot.slice(0, 10).map((r) => r.toString()).join(', ');
-    lines.push(
-      `⚠️ **Role order:** members with ${names}${report.rolesAboveBot.length > 10 ? ', …' : ''} are above my role, so they can only get honor mutes. ` +
-        'Drag my role above the roles of members who will bet (Server Settings → Roles).',
-    );
+    fields.push({
+      name: 'Role order',
+      value:
+        `Members with ${names}${report.rolesAboveBot.length > 10 ? ' and others' : ''} are above my role, so they can only get honor mutes. ` +
+        'To fix it, drag my role above theirs in Server Settings > Roles.',
+    });
   }
-  lines.push('', 'Configure with `/mutebet config view` and `/mutebet config set`.', UNINSTALL_NOTE);
-  return new EmbedBuilder().setTitle(title).setDescription(lines.join('\n')).setColor(report.missing.length ? 0xf0b232 : 0x57f287);
+  fields.push({ name: 'Settings', value: `See and change them with \`/mutebet config view\` and \`/mutebet config set\`. ${UNINSTALL_NOTE}` });
+  return new EmbedBuilder()
+    .setTitle(title)
+    .addFields(fields)
+    .setColor(report.missing.length ? 0xf0b232 : 0x57f287);
 }
 
 /** Guild create: upsert the row, make or adopt the marker role, post the setup embed if possible. */

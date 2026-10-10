@@ -16,7 +16,7 @@ import {
 /** Raw `/mutebet config set` options; null/undefined means "not given". */
 export interface ConfigSetInput {
   max_concurrent_mutes?: number | null;
-  token_expiry?: string | null;
+  mute_expiry?: string | null;
   allowed_durations?: string | null;
   confirm_window?: string | null;
   target_cooldown?: string | null;
@@ -36,7 +36,7 @@ function inRange(name: string, v: number, { min, max }: { min: number; max: numb
   if (v < min || v > max) errors.push(`\`${name}\` must be between ${fmt(min)} and ${fmt(max)}.`);
 }
 
-/** Validates and converts options into a config patch. Changes apply to new bets and tokens only. */
+/** Validates and converts options into a config patch. Bets already made keep the settings they started with. */
 export function parseConfigSet(input: ConfigSetInput): { patch: Partial<GuildConfig>; errors: string[] } {
   const patch: Partial<GuildConfig> = {};
   const errors: string[] = [];
@@ -45,9 +45,9 @@ export function parseConfigSet(input: ConfigSetInput): { patch: Partial<GuildCon
     inRange('max_concurrent_mutes', input.max_concurrent_mutes, CONFIG_LIMITS.maxConcurrentMutes, errors);
     patch.maxConcurrentMutes = input.max_concurrent_mutes;
   }
-  if (given(input.token_expiry)) {
-    if (isTokenExpiryKey(input.token_expiry)) patch.tokenExpiry = input.token_expiry;
-    else errors.push('`token_expiry` must be one of 7d, 30d, 90d, 365d, never.');
+  if (given(input.mute_expiry)) {
+    if (isTokenExpiryKey(input.mute_expiry)) patch.tokenExpiry = input.mute_expiry;
+    else errors.push('`mute_expiry` must be one of 7d, 30d, 90d, 365d, never.');
   }
   if (given(input.allowed_durations)) {
     const parts = input.allowed_durations.split(/[\s,]+/).filter(Boolean);

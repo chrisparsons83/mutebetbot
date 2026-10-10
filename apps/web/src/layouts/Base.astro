@@ -7,7 +7,7 @@ interface Props {
 }
 
 const { title, description = 'A Discord bot where members bet mute time instead of money.' } = Astro.props;
-const fullTitle = title === 'MuteBetBot' ? title : `${title} · MuteBetBot`;
+const fullTitle = title === 'MuteBetBot' ? title : `${title} | MuteBetBot`;
 const canonical = new URL(Astro.url.pathname, Astro.site);
 const path = Astro.url.pathname.replace(/\/$/, '') || '/';
 const links = [
@@ -34,7 +34,7 @@ const links = [
   <body>
     <header class="site">
       <div class="wrap">
-        <a class="brand" href="/">🤐 MuteBetBot</a>
+        <a class="brand" href="/">MuteBetBot</a>
         <nav>
           {links.map(([href, label]) => <a href={href} aria-current={path === href ? 'page' : undefined}>{label}</a>)}
           <a href="/invite">Add to Discord</a>

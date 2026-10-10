@@ -1,7 +1,7 @@
 import { makeShortId, type TokenStatus } from '@mutebetbot/shared';
-import { and, asc, eq, ilike, inArray, isNotNull, lte, type SQL } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, isNotNull, lte, or, type SQL } from 'drizzle-orm';
 import type { DbOrTx } from '../client.ts';
-import { tokens, type TokenRow } from '../schema.ts';
+import { bets, tokens, type BetRow, type TokenRow } from '../schema.ts';
 
 export type NewToken = Omit<typeof tokens.$inferInsert, 'id' | 'shortId' | 'status'>;
 
@@ -19,10 +19,6 @@ export async function insertToken(db: DbOrTx, values: NewToken): Promise<TokenRo
 
 export async function getToken(db: DbOrTx, id: string): Promise<TokenRow | undefined> {
   return db.query.tokens.findFirst({ where: eq(tokens.id, id) });
-}
-
-export async function getTokenByShortId(db: DbOrTx, guildId: string, shortId: string): Promise<TokenRow | undefined> {
-  return db.query.tokens.findFirst({ where: and(eq(tokens.guildId, guildId), eq(tokens.shortId, shortId)) });
 }
 
 export async function getTokenForBet(db: DbOrTx, betId: string): Promise<TokenRow | undefined> {
@@ -46,33 +42,30 @@ export async function transitionToken(
   return row;
 }
 
-export async function listTokensForHolder(
+/**
+ * Won mutes with the bet each came from, oldest first. With `query`, matches the bet's short ID
+ * prefix, its terms, or the holder/target (callers resolve names to `userIds`), like `searchBets`.
+ */
+export async function listWonMutes(
   db: DbOrTx,
   guildId: string,
-  holderId: string,
-  statuses: readonly TokenStatus[],
-): Promise<TokenRow[]> {
-  return db
-    .select()
-    .from(tokens)
-    .where(and(eq(tokens.guildId, guildId), eq(tokens.holderId, holderId), inArray(tokens.status, [...statuses])))
-    .orderBy(asc(tokens.issuedAt));
-}
-
-export async function searchTokens(
-  db: DbOrTx,
-  guildId: string,
-  opts: { prefix: string; holderId?: string | undefined; statuses?: readonly TokenStatus[]; limit?: number },
-): Promise<TokenRow[]> {
-  const conds: SQL[] = [eq(tokens.guildId, guildId), ilike(tokens.shortId, `${opts.prefix.replace(/[%_\\]/g, '')}%`)];
+  opts: { holderId?: string | undefined; statuses: readonly TokenStatus[]; query?: string; userIds?: readonly string[]; limit?: number },
+): Promise<{ token: TokenRow; bet: BetRow }[]> {
+  const conds: SQL[] = [eq(tokens.guildId, guildId), inArray(tokens.status, [...opts.statuses])];
   if (opts.holderId) conds.push(eq(tokens.holderId, opts.holderId));
-  if (opts.statuses?.length) conds.push(inArray(tokens.status, [...opts.statuses]));
+  const q = (opts.query ?? '').trim().replace(/[%_\\]/g, '');
+  if (q) {
+    const match: SQL[] = [ilike(bets.shortId, `${q}%`), ilike(bets.terms, `%${q}%`)];
+    if (opts.userIds?.length) match.push(inArray(tokens.holderId, [...opts.userIds]), inArray(tokens.targetId, [...opts.userIds]));
+    conds.push(or(...match)!);
+  }
   return db
-    .select()
+    .select({ token: tokens, bet: bets })
     .from(tokens)
+    .innerJoin(bets, eq(bets.id, tokens.betId))
     .where(and(...conds))
     .orderBy(asc(tokens.issuedAt))
-    .limit(opts.limit ?? 25);
+    .limit(opts.limit ?? 100);
 }
 
 /** The guild's queue, oldest first. */

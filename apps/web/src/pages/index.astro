@@ -15,7 +15,7 @@ import Base from '../layouts/Base.astro';
   <ol class="steps">
     <li>
       <strong>Propose</strong>
-      <code>/bet create</code> names your opponent, the terms, and the mute duration. Both of you click 🤝&nbsp;Accept to make it
+      <code>/bet create</code> names your opponent, what you think will happen, and the mute duration. Both of you click Accept to make it
       binding.
     </li>
     <li>
@@ -23,9 +23,9 @@ import Base from '../layouts/Base.astro';
       When it's decided, one of you runs <code>/bet resolve</code> and the other confirms. Disagree? An admin rules.
     </li>
     <li>
-      <strong>Redeem</strong>
-      The winner gets a mute token and picks <em>when</em> to use it with <code>/mute redeem</code>. Discord's own timeout does
-      the rest.
+      <strong>Mute</strong>
+      The winner picks <em>when</em> to use the mute, with the button on the bet or <code>/mute use</code>. The server sets how
+      long they have ({DEFAULT_CONFIG.tokenExpiry} by default).
     </li>
   </ol>
 

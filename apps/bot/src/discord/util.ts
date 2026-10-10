@@ -1,5 +1,6 @@
 import {
   DiscordAPIError,
+  escapeMarkdown,
   PermissionFlagsBits,
   RESTJSONErrorCodes,
   type Guild,
@@ -19,7 +20,26 @@ export class UserError extends Error {
 export const mention = (id: string) => `<@${id}>`;
 export const roleMention = (id: string) => `<@&${id}>`;
 /** Discord timestamp markup; renders in each viewer's timezone. */
-export const ts = (d: Date, style: 'R' | 'f' | 'F' | 't' | 'd' = 'f') => `<t:${Math.floor(d.getTime() / 1000)}:${style}>`;
+export const ts = (d: Date, style: 'R' | 'f' | 'F' | 't' | 'd' | 'D' = 'f') => `<t:${Math.floor(d.getTime() / 1000)}:${style}>`;
+
+export const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/** Display name for places that can't render mentions (autocomplete, button labels). */
+export function nameOf(guild: Guild, userId: string): string {
+  return guild.members.cache.get(userId)?.displayName ?? guild.client.users.cache.get(userId)?.username ?? 'someone';
+}
+
+/**
+ * The prediction as the end of "X bets that ...": one line, with a leading "I bet (that)" or "that"
+ * and trailing punctuation dropped, so people can type it either way.
+ */
+export function betClaim(terms: string): string {
+  const s = terms.replace(/\s+/g, ' ').trim().replace(/^(i\s+bet\s+)?(that\s+)?/i, '').replace(/[\s.!?]+$/, '');
+  return s || terms.trim();
+}
+
+/** "the bet that ...", for plain messages: clipped and markdown escaped. */
+export const theBet = (terms: string) => `the bet that ${escapeMarkdown(clip(betClaim(terms), 80))}`;
 
 /** Only these users may be pinged by a message. Everything else is inert text. */
 export const onlyUsers = (...ids: (string | null | undefined)[]) => ({

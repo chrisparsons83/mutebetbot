@@ -26,6 +26,7 @@ import { formatDuration, type MuteKind } from '@mutebetbot/shared';
 import type { Guild, GuildMember, Message, Role } from 'discord.js';
 import type { App } from '../context.ts';
 import { blockerText, explain, mutedLine } from '../copy.ts';
+import { refreshBetMessage } from './bets.ts';
 import { extendWindowForMute } from '../domain/bets.ts';
 import {
   partitionForStartup,
@@ -82,7 +83,7 @@ async function applyTimeout(member: GuildMember, until: Date | null): Promise<vo
     await member.disableCommunicationUntil(until, AUDIT_REASON);
   } catch {
     throw new UserError(
-      `I couldn't time out ${mention(member.id)}. Check that I have **Moderate Members** and that my role is above theirs (\`/mutebet repair\`). The token is kept.`,
+      `I couldn't time out ${mention(member.id)}. Check that I have Moderate Members and that my role is above theirs (\`/mutebet repair\` checks both). You still have the mute.`,
     );
   }
 }
@@ -91,20 +92,32 @@ async function applyTimeout(member: GuildMember, until: Date | null): Promise<vo
 // Redeem
 // ---------------------------------------------------------------------------
 
+/** A mute that can't start right now. Carries the reason so a button can offer to wait in line. */
+export class MuteBlockedError extends UserError {
+  override name = 'MuteBlockedError';
+  readonly blocker: Blocker;
+  constructor(blocker: Blocker) {
+    super(blockerText(blocker, 'command'));
+    this.blocker = blocker;
+  }
+}
+
 export type RedeemResult =
   | { action: 'muted'; mute: MuteRow; token: TokenRow }
   | { action: 'queued'; token: TokenRow; blocker: Blocker };
 
-/** `/mute redeem`: lock the guild row, check cap and cooldown, spend the token, time out, add the role. */
+/** `/mute use` and the Mute button: lock the guild row, check cap and cooldown, spend the token, time out, add the role. */
 export async function redeemToken(app: App, guild: Guild, tokenId: string, actorId: string, queue: boolean, now = new Date()): Promise<RedeemResult> {
-  const role = await ensureMarkerRole(app, guild);
   const initial = await getToken(app.db, tokenId);
-  if (!initial) throw new UserError('That token no longer exists.');
+  if (!initial) throw new UserError('That mute no longer exists.');
+  // The Mute button is on a public card: turn away other members before any Discord calls.
+  if (initial.holderId !== actorId) throw new UserError(explain({ error: 'not_holder' }));
+  const role = await ensureMarkerRole(app, guild);
   const member = await fetchMember(guild, initial.targetId);
 
   const result = await app.db.transaction(async (tx): Promise<RedeemResult> => {
     const g = await lockGuild(tx, guild.id);
-    if (!g) throw new UserError('This server isn’t set up yet. Try `/mutebet repair`.');
+    if (!g) throw new UserError("This server isn't set up yet. Try `/mutebet repair`.");
     const token = (await getToken(tx, tokenId))!;
     const config = toGuildConfig(g);
     const { capCount, soonestEnd } = capStats(await activeMutesForGuild(tx, guild.id));
@@ -120,17 +133,20 @@ export async function redeemToken(app: App, guild: Guild, tokenId: string, actor
       queue,
       now,
     });
-    if (!plan.ok) throw new UserError(explain(plan));
+    if (!plan.ok) {
+      if (plan.error === 'blocked') throw new MuteBlockedError(plan.blocker);
+      throw new UserError(explain(plan));
+    }
 
     if (plan.action === 'queue') {
       const queued = await transitionToken(tx, token.id, 'available', 'queued', { queuedAt: now });
-      if (!queued) throw new UserError('That token was just used.');
+      if (!queued) throw new UserError('That mute was just used.');
       await logEvent(tx, { guildId: guild.id, entity: 'token', entityId: token.id, actorId, type: 'queued', payload: { reason: plan.blocker.reason } });
       return { action: 'queued', token: queued, blocker: plan.blocker };
     }
 
     const spent = await transitionToken(tx, token.id, 'available', 'active');
-    if (!spent) throw new UserError('That token was just used.');
+    if (!spent) throw new UserError('That mute was just used.');
     const mute = await insertMute(tx, {
       guildId: guild.id,
       tokenId: token.id,
@@ -140,8 +156,8 @@ export async function redeemToken(app: App, guild: Guild, tokenId: string, actor
       endsAt: plan.endsAt,
       timeoutSetTo: plan.timeoutSetTo,
     });
-    if (!mute) throw new UserError(blockerText({ reason: 'target_muted' }, false));
-    // A failed timeout throws and rolls everything back: the token stays Available.
+    if (!mute) throw new MuteBlockedError({ reason: 'target_muted' });
+    // A failed timeout throws and rolls everything back, so the mute can still be used.
     await applyTimeout(member!, plan.timeoutSetTo);
     await logEvent(tx, {
       guildId: guild.id,
@@ -159,6 +175,7 @@ export async function redeemToken(app: App, guild: Guild, tokenId: string, actor
     app.scheduler.schedule(result.mute);
     trackHonor(app, result.mute, true);
   }
+  await refreshBetMessage(app, initial.betId);
   return result;
 }
 
@@ -247,22 +264,25 @@ export async function promoteQueue(app: App, guildId: string, now = new Date()):
     const holder = await app.client.users.fetch(token.holderId).catch(() => null);
     if (holder) {
       await tryDm(holder, {
-        content: `Your queued token **${token.shortId}** in **${guild.name}** just started: ${mention(mute.targetId)} is muted until ${ts(mute.endsAt, 'f')}.`,
+        content: `Your mute on ${mention(mute.targetId)} in **${guild.name}** was waiting in line and has started. They're muted until ${ts(mute.endsAt, 'f')}.`,
         allowedMentions: onlyUsers(),
       }).catch(() => null);
     }
     await announce(app, guild, bet?.channelId ?? null, {
-      content: `${mutedLine(mute.targetId, token.durationS, mute.endsAt, mute.kind === 'honor')} Courtesy of ${mention(token.holderId)} (from the queue).`,
+      content: mutedLine(mute.targetId, token.holderId, mute.endsAt, mute.kind === 'honor'),
       allowedMentions: onlyUsers(mute.targetId, token.holderId),
     });
+    await refreshBetMessage(app, token.betId);
   }
   for (const token of returned) {
     const holder = await app.client.users.fetch(token.holderId).catch(() => null);
     if (holder) {
       await tryDm(holder, {
-        content: `Your queued token **${token.shortId}** in **${guild.name}** was returned: its target can't be muted here anymore. It's back in \`/mute tokens\`.`,
+        content: `Your mute on ${mention(token.targetId)} in **${guild.name}** was taken out of line because they can't be muted there right now. You still have it, and it's in \`/mute list\`.`,
+        allowedMentions: onlyUsers(),
       }).catch(() => null);
     }
+    await refreshBetMessage(app, token.betId);
   }
 }
 
@@ -308,6 +328,8 @@ export async function finalizeMute(app: App, muteId: string, reason: EndReason, 
   trackHonor(app, mute, false);
   if (guild) {
     await removeRole(app, guild, mute.targetId);
+    const token = await getToken(app.db, mute.tokenId);
+    if (token && reason !== 'uninstall') await refreshBetMessage(app, token.betId);
     if (reason !== 'uninstall') await promoteQueue(app, mute.guildId);
   }
   return done;
@@ -327,24 +349,26 @@ export async function adminUnmute(app: App, guildId: string, targetId: string, a
 }
 
 // ---------------------------------------------------------------------------
-// Tokens
+// Won mutes (stored as tokens)
 // ---------------------------------------------------------------------------
 
 export async function unqueueToken(app: App, token: TokenRow, actorId: string): Promise<TokenRow> {
-  if (token.holderId !== actorId) throw new UserError("That token isn't yours.");
+  if (token.holderId !== actorId) throw new UserError("That isn't your mute.");
   const row = await transitionToken(app.db, token.id, 'queued', 'available', { queuedAt: null });
-  if (!row) throw new UserError("That token isn't queued.");
+  if (!row) throw new UserError("That mute isn't waiting in line.");
   await logEvent(app.db, { guildId: token.guildId, entity: 'token', entityId: token.id, actorId, type: 'unqueued' });
+  await refreshBetMessage(app, row.betId);
   return row;
 }
 
 export async function revokeToken(app: App, token: TokenRow, adminId: string): Promise<TokenRow> {
   if (token.holderId === adminId || token.targetId === adminId) {
-    throw new UserError("You're a party to this token, so another admin has to revoke it.");
+    throw new UserError("You're part of this bet, so another admin has to cancel the mute.");
   }
   const row = await transitionToken(app.db, token.id, ['available', 'queued'], 'revoked', { queuedAt: null });
-  if (!row) throw new UserError('Only unspent (available or queued) tokens can be revoked.');
+  if (!row) throw new UserError('Only a mute that hasn\'t been used yet can be cancelled.');
   await logEvent(app.db, { guildId: token.guildId, entity: 'token', entityId: token.id, actorId: adminId, type: 'revoked' });
+  await refreshBetMessage(app, row.betId);
   return row;
 }
 
@@ -368,6 +392,8 @@ export async function onMemberLeave(app: App, guildId: string, userId: string, n
   app.scheduler.cancel(mute.id);
   trackHonor(app, mute, false);
   app.log.info({ guildId, userId, remainingS: plan.remainingS }, 'muted member left; mute paused');
+  const token = await getToken(app.db, mute.tokenId);
+  if (token) await refreshBetMessage(app, token.betId);
   await promoteQueue(app, guildId);
 }
 
@@ -403,9 +429,10 @@ export async function onMemberJoin(app: App, member: GuildMember, now = new Date
   trackHonor(app, resumed, true);
   const bet = await getBet(app.db, token.betId);
   await announce(app, member.guild, bet?.channelId ?? null, {
-    content: `↩️ ${mention(member.id)} came back, and their bet-mute resumes: ${formatDuration((plan.endsAt.getTime() - plan.startsAt.getTime()) / 1000)} until ${ts(plan.endsAt, 't')}.`,
+    content: `${mention(member.id)} is back, so their bet-mute picks up again until ${ts(plan.endsAt, 't')}.`,
     allowedMentions: onlyUsers(member.id),
   });
+  await refreshBetMessage(app, token.betId);
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +451,7 @@ export async function onMessage(app: App, message: Message<true>, now = new Date
   await updateMute(app.db, mute.id, { lastCalloutAt: now });
   const left = formatDuration((mute.endsAt.getTime() - now.getTime()) / 1000);
   await message
-    .reply({ content: `🤐 ${mention(message.author.id)} lost a bet and is on an honor mute for another ${left}.`, allowedMentions: onlyUsers(message.author.id) })
+    .reply({ content: `${mention(message.author.id)} is on an honor mute for another ${left}.`, allowedMentions: onlyUsers(message.author.id) })
     .catch((e: unknown) => app.log.debug({ err: e }, 'honor callout failed'));
 }
 

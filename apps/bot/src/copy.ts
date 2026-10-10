@@ -1,4 +1,4 @@
-import { formatDuration, type BetStatus, type TokenStatus } from '@mutebetbot/shared';
+import type { BetStatus, TokenStatus } from '@mutebetbot/shared';
 import type { Blocker } from './domain/mutes.ts';
 import { STATUS_LABEL } from './discord/render.ts';
 import { mention, ts } from './discord/util.ts';
@@ -7,7 +7,7 @@ import { mention, ts } from './discord/util.ts';
 export function explain(e: { error: string } & Record<string, unknown>): string {
   switch (e.error) {
     case 'disabled':
-      return 'MuteBetBot is paused in this server: new bets and redemptions are off.';
+      return 'MuteBetBot is paused in this server. New bets and mutes are off for now.';
     case 'self_bet':
       return "You can't bet against yourself.";
     case 'bot_opponent':
@@ -15,13 +15,13 @@ export function explain(e: { error: string } & Record<string, unknown>): string 
     case 'opponent_not_member':
       return "That person isn't in this server.";
     case 'terms_empty':
-      return 'Say what the bet is about.';
+      return 'Say what you think will happen, like "Oklahoma scores over 30.5 against Texas".';
     case 'terms_too_long':
-      return `Keep the terms to ${String(e.max)} characters.`;
+      return `Keep the prediction to ${String(e.max)} characters.`;
     case 'duration_not_allowed':
       return `That duration isn't allowed here. Choose one of: ${(e.allowed as string[]).join(', ')}.`;
     case 'create_cooldown':
-      return `Slow down: you can propose another bet ${ts(e.retryAt as Date, 'R')}.`;
+      return `You can propose another bet ${ts(e.retryAt as Date, 'R')}.`;
     case 'too_many_proposals':
       return `You already have ${String(e.max)} proposals waiting. Cancel one or wait for them to be accepted.`;
     case 'unmutable_party':
@@ -45,33 +45,40 @@ export function explain(e: { error: string } & Record<string, unknown>): string 
     case 'no_open_claim':
       return "There's nothing to confirm or dispute on that bet.";
     case 'own_claim':
-      return "That's your own claim; the other party has to answer it.";
+      return "That's your own claim. The other party has to answer it.";
     case 'admin_is_party':
       return "You're a party to this bet, so another admin has to rule on it.";
     case 'not_rulable':
-      return `That bet is ${STATUS_LABEL[e.status as BetStatus].toLowerCase()}; only active or disputed bets can be ruled.`;
+      return `That bet is ${STATUS_LABEL[e.status as BetStatus].toLowerCase()}. Only active or disputed bets can be ruled on.`;
     case 'winner_not_party':
       return 'The winner must be one of the two people in the bet.';
     case 'not_holder':
-      return "That token isn't yours.";
+      return 'Only the winner can use this mute.';
     case 'not_available':
-      return `That token is ${tokenStatusText(e.status as TokenStatus)}.`;
+      return wonMuteStatusText(e.status as TokenStatus);
     case 'target_absent':
-      return "The loser isn't in the server right now. Your token is kept; try again if they come back.";
+      return "The loser isn't in the server right now. You still have the mute, so try again when they're back.";
     case 'target_unmutable':
-      return "This server doesn't allow honor mutes, and the loser can't be timed out. Your token is kept.";
+      return "This server doesn't allow honor mutes, and the loser can't be timed out. You still have the mute.";
     case 'blocked':
-      return blockerText(e.blocker as Blocker, false);
+      return blockerText(e.blocker as Blocker, 'command');
     default:
-      return 'That didn’t work.';
+      return "That didn't work.";
   }
 }
 
-export function blockerText(b: Blocker, queued: boolean): string {
-  const suffix = queued ? ' Your token is queued and will start automatically.' : ' Your token is kept. Add `queue:true` to wait in line.';
+/** How the person can wait for a blocked mute: already queued, the `queue` option, or the Wait in line button. */
+export type QueueHint = 'queued' | 'command' | 'button';
+
+export function blockerText(b: Blocker, hint: QueueHint): string {
+  const suffix = {
+    queued: ' Your mute is in line and starts on its own.',
+    command: ' You still have the mute. Add `queue:true` to wait in line.',
+    button: ' You still have the mute, or you can wait in line.',
+  }[hint];
   switch (b.reason) {
     case 'at_cap':
-      return `The server is at its limit of simultaneous bet-mutes${b.soonestEnd ? `; the next one ends ${ts(b.soonestEnd, 'R')}` : ''}.${suffix}`;
+      return `The server is at its limit of people bet-muted at once.${b.soonestEnd ? ` The next one ends ${ts(b.soonestEnd, 'R')}.` : ''}${suffix}`;
     case 'target_muted':
       return `They're already bet-muted.${suffix}`;
     case 'target_cooldown':
@@ -79,11 +86,19 @@ export function blockerText(b: Blocker, queued: boolean): string {
   }
 }
 
-export function tokenStatusText(s: TokenStatus): string {
-  return { available: 'available', queued: 'queued', active: 'already in use', completed: 'already spent', expired: 'expired', revoked: 'revoked' }[s];
+export function wonMuteStatusText(s: TokenStatus): string {
+  return {
+    available: 'That mute is ready to use.',
+    queued: 'That mute is already waiting in line.',
+    active: 'That mute is already running.',
+    completed: 'That mute has already been used.',
+    expired: 'That mute expired before it was used.',
+    revoked: 'An admin cancelled that mute.',
+  }[s];
 }
 
-export const mutedLine = (targetId: string, durationS: number, endsAt: Date, honor: boolean) =>
+/** The public line when a mute starts. */
+export const mutedLine = (targetId: string, winnerId: string, endsAt: Date, honor: boolean) =>
   honor
-    ? `🤐 ${mention(targetId)} lost a bet and is on an **honor mute** for ${formatDuration(durationS)} (until ${ts(endsAt, 't')}).`
-    : `🔇 ${mention(targetId)} lost a bet and is muted for **${formatDuration(durationS)}** (until ${ts(endsAt, 't')}).`;
+    ? `${mention(targetId)} lost a bet to ${mention(winnerId)} and is on an honor mute until ${ts(endsAt, 't')}.`
+    : `${mention(targetId)} lost a bet to ${mention(winnerId)} and is muted until ${ts(endsAt, 't')}.`;

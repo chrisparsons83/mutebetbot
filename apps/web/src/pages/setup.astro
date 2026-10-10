@@ -4,17 +4,17 @@ import Base from '../layouts/Base.astro';
 
 const c = DEFAULT_CONFIG;
 const settings = [
-  ['max_concurrent_mutes', String(c.maxConcurrentMutes), `${CONFIG_LIMITS.maxConcurrentMutes.min}–${CONFIG_LIMITS.maxConcurrentMutes.max}`, 'How many members can be bet-muted at once. Over the cap, redemptions wait or can join a queue.'],
-  ['token_expiry', c.tokenExpiry, TOKEN_EXPIRY_KEYS.join(', '), 'How long a won token stays redeemable.'],
+  ['max_concurrent_mutes', String(c.maxConcurrentMutes), `${CONFIG_LIMITS.maxConcurrentMutes.min} to ${CONFIG_LIMITS.maxConcurrentMutes.max}`, 'How many members can be bet-muted at once. Past the limit, a winner can wait in line.'],
+  ['mute_expiry', c.tokenExpiry, TOKEN_EXPIRY_KEYS.join(', '), 'How long a winner has to use their mute.'],
   ['allowed_durations', c.allowedDurations.join(', '), `any of ${MUTE_DURATION_KEYS.join(', ')}`, 'Durations offered by /bet create.'],
-  ['confirm_window', formatDuration(c.confirmWindowS), '1h–14d', 'Time to answer a claim before it goes to an admin.'],
-  ['target_cooldown', formatDuration(c.targetCooldownS), '0–7d', 'Minimum gap between two bet-mutes on the same member.'],
-  ['max_open_proposals_per_user', String(c.maxOpenProposalsPerUser), '1–10', 'Unaccepted proposals one member can have open.'],
+  ['confirm_window', formatDuration(c.confirmWindowS), '1h to 14d', 'Time to answer a claim before it goes to an admin.'],
+  ['target_cooldown', formatDuration(c.targetCooldownS), '0 to 7d', 'Minimum gap between two bet-mutes on the same member.'],
+  ['max_open_proposals_per_user', String(c.maxOpenProposalsPerUser), '1 to 10', 'Unaccepted proposals one member can have open.'],
   ['unmutable_members', c.unmutableMembers, 'honor, reject', 'Bets with admins or members above the bot: honor mutes, or refused.'],
   ['rejoin_policy', c.rejoinPolicy, 'restart_full, resume_remaining', 'What happens when a muted member leaves and comes back.'],
   ['admin_role', 'none', 'any role', 'Holders can use admin commands, in addition to Manage Server.'],
   ['announce_channel', 'none', 'any text channel', 'Where results, disputes, and mutes are posted (default: where they happen).'],
-  ['enabled', 'true', 'true, false', 'Pause new bets and redemptions without uninstalling.'],
+  ['enabled', 'true', 'true, false', 'Pause new bets and mutes without uninstalling.'],
 ];
 ---
 
@@ -25,7 +25,7 @@ const settings = [
   <h2>1. Move the bot's role up</h2>
   <p>
     Discord only lets a bot time out members whose highest role is <strong>below</strong> the bot's own. New bot roles start near
-    the bottom, so open <strong>Server Settings → Roles</strong> and drag <strong>MuteBetBot</strong> above the roles of anyone who
+    the bottom, so open <strong>Server Settings &gt; Roles</strong> and drag <strong>MuteBetBot</strong> above the roles of anyone who
     will bet.
   </p>
   <div class="card">
@@ -46,7 +46,7 @@ Regulars            ← can be timed out
   <p>The invite link asks for exactly these: Moderate Members, Manage Roles, View Channels, Send Messages, Embed Links, Read Message History, and (optional) View Audit Log, used to notice when a moderator lifts a bet-mute by hand.</p>
 
   <h2>3. Settings</h2>
-  <p>Admins (Manage Server, or the configured admin role) change these with <code>/mutebet config set</code>. Changes apply to new bets and tokens; existing ones keep their terms.</p>
+  <p>Admins (Manage Server, or the configured admin role) change these with <code>/mutebet config set</code>. Bets already made, and mutes already won, keep the settings they started with.</p>
   <div class="table-scroll">
     <table>
       <thead><tr><th>Setting</th><th>Default</th><th>Allowed</th><th>What it does</th></tr></thead>

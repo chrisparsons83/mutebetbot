@@ -9,11 +9,13 @@ import {
   insertMute,
   insertToken,
   lastMuteEnd,
+  listWonMutes,
   lockGuild,
   markGuildRemoved,
   purgeRemovedGuilds,
   queuedTokens,
   recordAcceptance,
+  searchBets,
   toGuildConfig,
   transitionBet,
   transitionMute,
@@ -44,6 +46,24 @@ describe.runIf(hasTestDb)('db queries (integration)', () => {
     });
     return { guildId, a, b, bet };
   }
+
+  it('searches bets by short ID prefix, terms, or party', async () => {
+    const { guildId, a, bet } = await setup();
+    const ids = async (query: string, userIds: string[] = []) => (await searchBets(db, guildId, { query, userIds })).map((b) => b.id);
+    expect(await ids(bet.shortId.slice(0, 2))).toEqual([bet.id]);
+    expect(await ids('rain')).toEqual([bet.id]);
+    expect(await ids('snow')).toEqual([]);
+    expect(await ids('parsons', [a])).toEqual([bet.id]);
+    expect(await ids('')).toEqual([bet.id]);
+  });
+
+  it('lists won mutes with their bets', async () => {
+    const { guildId, a, b, bet } = await setup();
+    await insertToken(db, { guildId, betId: bet.id, holderId: a, targetId: b, durationS: 3600, issuedAt: new Date(), expiresAt: null });
+    const rows = await listWonMutes(db, guildId, { holderId: a, statuses: ['available'] });
+    expect(rows.map((r) => [r.bet.terms, r.token.targetId])).toEqual([['Rain tomorrow', b]]);
+    expect(await listWonMutes(db, guildId, { holderId: b, statuses: ['available'] })).toEqual([]);
+  });
 
   it('creates guilds with the default config and revives soft-deleted ones', async () => {
     const id = snowflake();

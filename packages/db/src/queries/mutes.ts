@@ -15,6 +15,11 @@ export async function getMute(db: DbOrTx, id: string): Promise<MuteRow | undefin
   return db.query.mutes.findFirst({ where: eq(mutes.id, id) });
 }
 
+/** The mute a won bet turned into, if it has been used. */
+export async function getMuteForToken(db: DbOrTx, tokenId: string): Promise<MuteRow | undefined> {
+  return db.query.mutes.findFirst({ where: eq(mutes.tokenId, tokenId) });
+}
+
 export async function transitionMute(
   db: DbOrTx,
   id: string,

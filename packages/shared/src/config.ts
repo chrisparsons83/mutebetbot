@@ -54,4 +54,4 @@ export const SWEEP_INTERVAL_S = 5 * 60;
 export const GUILD_PURGE_AFTER_S = 30 * 86_400;
 export const TERMS_MAX_LENGTH = 200;
 
-export const MARKER_ROLE_NAME = 'MuteBetBot · Muted';
+export const MARKER_ROLE_NAME = 'Bet Muted';
