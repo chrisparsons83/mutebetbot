@@ -2,7 +2,7 @@ import { getBet, getClaim } from '@mutebetbot/db';
 import { MessageFlags, type ButtonInteraction, type Interaction, type RepliableInteraction } from 'discord.js';
 import { betCommand } from './commands/bet.ts';
 import type { CommandModule } from './commands/common.ts';
-import { muteCommand } from './commands/mute.ts';
+import { muteCommand, useMute } from './commands/mute.ts';
 import { mutebetCommand } from './commands/mutebet.ts';
 import type { App } from './context.ts';
 import { renderBetMessage } from './discord/render.ts';
@@ -17,8 +17,10 @@ async function reportError(app: App, i: RepliableInteraction, e: unknown) {
   if (!expected) app.log.error({ err: e, interaction: i.id, user: i.user.id, guild: i.guildId }, 'interaction failed');
   const content = expected ? e.message : 'Something went wrong on my end. Please try again.';
   try {
-    // A deferred command shows "thinking…" until edited; buttons deferred with deferUpdate get a follow-up instead.
-    if (i.isChatInputCommand() && i.deferred && !i.replied) await i.editReply({ content, allowedMentions: onlyUsers() });
+    // A deferReply shows "thinking…" until edited, and so does a private message deferred with deferUpdate
+    // (the Wait in line prompt). Buttons on public messages get a follow-up instead.
+    const editable = i.isChatInputCommand() || i.ephemeral || (i.isMessageComponent() && i.message.flags.has(MessageFlags.Ephemeral));
+    if (editable && i.deferred && !i.replied) await i.editReply({ content, components: [], allowedMentions: onlyUsers() });
     else if (i.deferred || i.replied) await i.followUp({ content, flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() });
     else await i.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: onlyUsers() });
   } catch (err) {
@@ -50,8 +52,13 @@ async function onButton(app: App, i: ButtonInteraction) {
     if (!claim || !bet) throw new UserError('That claim no longer exists.');
     await i.deferUpdate();
     const r = await respondToClaim(app, bet, i.user.id, action === 'confirm' ? 'confirm' : 'dispute', undefined, claim.id);
-    const msg = { resolved: 'Confirmed. The bet is settled.', disputed: 'Disputed. An admin will rule.', opened: 'Got it. The bet stays on.' }[r.kind];
+    const msg = { resolved: 'Confirmed. The bet is settled.', disputed: 'Disputed. An admin will decide.', opened: 'The bet stays on.' }[r.kind];
     await i.followUp({ content: msg });
+    return;
+  }
+  if (scope === 'mute') {
+    if (!i.inCachedGuild()) return;
+    await useMute(app, i, id, action === 'queue', action === 'queue' ? 'queue_button' : 'button');
   }
 }
 

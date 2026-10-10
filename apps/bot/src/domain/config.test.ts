@@ -5,7 +5,7 @@ describe('parseConfigSet', () => {
   it('converts every option', () => {
     const r = parseConfigSet({
       max_concurrent_mutes: 5,
-      token_expiry: 'never',
+      mute_expiry: 'never',
       allowed_durations: '24h, 30m,1h,1h',
       confirm_window: '1d 12h',
       target_cooldown: '0',

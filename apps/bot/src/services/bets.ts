@@ -4,6 +4,7 @@ import {
   getBetByMessage,
   getClaim,
   getGuild,
+  getMuteForToken,
   getOpenClaim,
   getTokenForBet,
   insertClaim,
@@ -22,18 +23,28 @@ import {
   type TokenRow,
 } from '@mutebetbot/db';
 import type { ClaimKind } from '@mutebetbot/shared';
+import { escapeMarkdown } from 'discord.js';
 import type { App } from '../context.ts';
 import { explain } from '../copy.ts';
 import { otherParty, planAccept, planCancel, planClaim, planClaimTimeout, planDecline, planRespond } from '../domain/bets.ts';
 import { tokenExpiresAt } from '../domain/mutes.ts';
-import { renderBetMessage, renderClaimDm } from '../discord/render.ts';
-import { mention, onlyUsers, roleMention, tryDm, UserError } from '../discord/util.ts';
+import { renderBetMessage, renderClaimDm, type BetCardExtra } from '../discord/render.ts';
+import { mention, nameOf, onlyUsers, roleMention, theBet, tryDm, UserError } from '../discord/util.ts';
 import { announce, guildOf } from './notify.ts';
 
 type Outcome = { status: 'resolved'; winnerId: string; loserId: string } | { status: 'void' };
 
 function fail(r: { ok: false; error: string } & Record<string, unknown>): never {
   throw new UserError(explain(r));
+}
+
+/** Everything the bet card shows besides the bet row itself. */
+export async function betCardExtra(app: App, bet: BetRow): Promise<BetCardExtra> {
+  const [claim, token] = await Promise.all([getOpenClaim(app.db, bet.id), getTokenForBet(app.db, bet.id)]);
+  const mute = token ? await getMuteForToken(app.db, token.id) : undefined;
+  const guild = guildOf(app, bet.guildId);
+  const loserName = guild && bet.winnerId ? nameOf(guild, otherParty(bet, bet.winnerId)) : undefined;
+  return { claim, token, mute, loserName };
 }
 
 /** Re-renders the public bet message after a state change. Best-effort. */
@@ -43,10 +54,10 @@ export async function refreshBetMessage(app: App, betId: string): Promise<void> 
   const guild = guildOf(app, bet.guildId);
   const channel = guild?.channels.cache.get(bet.channelId);
   if (!channel?.isTextBased()) return;
-  const [claim, token] = await Promise.all([getOpenClaim(app.db, bet.id), getTokenForBet(app.db, bet.id)]);
+  const extra = await betCardExtra(app, bet);
   try {
     const message = await channel.messages.fetch(bet.messageId);
-    await message.edit({ ...renderBetMessage(bet, { claim, token }), allowedMentions: onlyUsers() });
+    await message.edit({ ...renderBetMessage(bet, extra), allowedMentions: onlyUsers() });
   } catch (e) {
     app.log.debug({ err: e, betId }, 'could not refresh bet message');
   }
@@ -161,18 +172,18 @@ async function applyOutcome(
   return { bet: row, token };
 }
 
-export async function announceOutcome(app: App, bet: BetRow, token: TokenRow | undefined, ruledBy?: string): Promise<void> {
+/** The ping that goes out when a bet settles. The bet card itself carries the Mute button. */
+export async function announceOutcome(app: App, bet: BetRow, ruledBy?: string): Promise<void> {
   const guild = guildOf(app, bet.guildId);
   if (!guild) return;
-  const by = ruledBy ? ` (ruled by ${mention(ruledBy)})` : '';
+  const which = theBet(bet.terms);
+  const pair = `${mention(bet.challengerId)} and ${mention(bet.opponentId)}`;
   let content: string;
   if (bet.status === 'void') {
-    content = `🤷 Bet **${bet.shortId}** between ${mention(bet.challengerId)} and ${mention(bet.opponentId)} was called off${by}.`;
+    content = ruledBy ? `${mention(ruledBy)} called off ${which} between ${pair}.` : `${pair} called off ${which}.`;
   } else {
-    const loser = otherParty(bet, bet.winnerId!);
-    content =
-      `🏆 ${mention(bet.winnerId!)} won bet **${bet.shortId}** against ${mention(loser)}${by}.` +
-      (token ? ` Token **${token.shortId}** can be redeemed with \`/mute redeem\`.` : '');
+    const won = `${mention(bet.winnerId!)} beat ${mention(otherParty(bet, bet.winnerId!))} on ${which}`;
+    content = ruledBy ? `${mention(ruledBy)} ruled that ${won}.` : `${won}.`;
   }
   await announce(app, guild, bet.channelId, { content, allowedMentions: onlyUsers(bet.challengerId, bet.opponentId) });
 }
@@ -226,9 +237,9 @@ async function notifyClaim(app: App, bet: BetRow, claim: ClaimRow): Promise<void
     await setClaimDm(app.db, claim.id, dm.channelId, dm.id);
     return;
   }
-  const what = claim.kind === 'void' ? 'wants to call off' : 'claimed a result on';
+  const what = claim.kind === 'void' ? 'wants to call off' : claim.kind === 'win' ? 'says they won' : 'says you won';
   await announce(app, guild, bet.channelId, {
-    content: `${mention(responderId)}, ${mention(claim.claimantId)} ${what} bet **${bet.shortId}** and I couldn't DM you. Answer with \`/bet confirm bet:${bet.shortId}\` or \`/bet dispute bet:${bet.shortId}\`.`,
+    content: `${mention(responderId)}, ${mention(claim.claimantId)} ${what} ${theBet(bet.terms)}. I couldn't DM you, so answer with \`/bet confirm\` or \`/bet dispute\`.`,
     allowedMentions: onlyUsers(responderId),
   });
 }
@@ -283,9 +294,9 @@ async function respond(
       await logEvent(tx, { guildId: bet.guildId, entity: 'bet', entityId: bet.id, actorId: userId, type: 'confirmed' });
       return applyOutcome(tx, bet, plan.outcome, null, now);
     });
-    await closeClaimDm(app, bet, open, '✅ Confirmed.');
+    await closeClaimDm(app, bet, open, 'Confirmed.');
     await refreshBetMessage(app, bet.id);
-    await announceOutcome(app, result.bet, result.token);
+    await announceOutcome(app, result.bet);
     return { kind: 'resolved', ...result };
   }
 
@@ -309,7 +320,7 @@ async function respond(
     await logEvent(tx, { guildId: bet.guildId, entity: 'bet', entityId: bet.id, actorId: userId, type: 'disputed', payload: { reason } });
     return disputed ?? bet;
   });
-  await closeClaimDm(app, bet, open, '⚖️ Disputed. An admin will rule.');
+  await closeClaimDm(app, bet, open, 'Disputed. An admin will decide.');
   await refreshBetMessage(app, bet.id);
   await notifyAdminsOfDispute(app, row, reason);
   return { kind: 'disputed', bet: row };
@@ -320,11 +331,11 @@ async function notifyAdminsOfDispute(app: App, bet: BetRow, reason: string | und
   if (!guild) return;
   const row = await getGuild(app.db, bet.guildId);
   const adminRole = row ? toGuildConfig(row).adminRoleId : null;
-  const who = adminRole ? `${roleMention(adminRole)}: ` : 'Admins: ';
+  const who = adminRole ? roleMention(adminRole) : 'Admins';
   await announce(app, guild, bet.channelId, {
     content:
-      `⚖️ ${who}bet **${bet.shortId}** between ${mention(bet.challengerId)} and ${mention(bet.opponentId)} is disputed` +
-      `${reason ? ` (“${reason.slice(0, 200)}”)` : ''}. Rule with \`/mutebet rule bet:${bet.shortId}\`.`,
+      `${who}, ${mention(bet.challengerId)} and ${mention(bet.opponentId)} disagree on ${theBet(bet.terms)}.` +
+      `${reason ? ` The reason given was "${escapeMarkdown(reason.slice(0, 200))}".` : ''} Decide it with \`/mutebet rule\`.`,
     allowedMentions: { parse: [], users: [], roles: adminRole ? [adminRole] : [] },
   });
 }
@@ -339,7 +350,7 @@ export async function adminRule(app: App, bet: BetRow, adminId: string, outcome:
   });
   if (open) await closeClaimDm(app, bet, open, 'An admin ruled on this bet.');
   await refreshBetMessage(app, bet.id);
-  await announceOutcome(app, result.bet, result.token, adminId);
+  await announceOutcome(app, result.bet, adminId);
   return result;
 }
 
@@ -370,7 +381,7 @@ export async function sweepClaims(app: App, now = new Date()): Promise<number> {
     });
     if (!moved) continue;
     n++;
-    await closeClaimDm(app, bet, claim, lapse ? 'No answer; the bet stays on.' : 'No answer in time; an admin will rule.');
+    await closeClaimDm(app, bet, claim, lapse ? 'No answer, so the bet stays on.' : 'No answer in time, so an admin will decide.');
     await refreshBetMessage(app, bet.id);
     if (!lapse) await notifyAdminsOfDispute(app, moved, 'No answer within the confirm window');
   }

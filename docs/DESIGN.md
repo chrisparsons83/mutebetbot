@@ -24,7 +24,7 @@ MuteBetBot is a public Discord bot where two members wager *time*, not money: th
 
 ## Core concepts and bet lifecycle
 
-There are three records: a **bet** (the agreement), a **mute token** (what the winner earns), and a **mute** (a token being spent). Each has its own state machine, and every transition is a single guarded database update so double-clicks and races can't apply twice.
+There are three records: a **bet** (the agreement), a **mute token** (what the winner earns), and a **mute** (a token being spent). "Token" is an internal name only: users see "the mute you won", and every command picks it by its bet. Each has its own state machine, and every transition is a single guarded database update so double-clicks and races can't apply twice.
 
 ```mermaid
 stateDiagram-v2
@@ -49,8 +49,8 @@ A resolved bet issues one mute token to the winner, bound to the loser and to th
 ```mermaid
 stateDiagram-v2
     [*] --> Available: bet resolved
-    Available --> Active: /mute redeem (slot free)
-    Available --> Queued: /mute redeem queue:true<br/>(server at cap)
+    Available --> Active: Mute button or /mute use (slot free)
+    Available --> Queued: Wait in line or /mute use queue:true<br/>(server at cap)
     Queued --> Active: a slot frees
     Queued --> Available: holder unqueues
     Available --> Expired: server window passes
@@ -74,13 +74,13 @@ stateDiagram-v2
 
 ## Slash commands
 
-Slash commands are guild-only. Bets and tokens use short human IDs (e.g. `B7K2`, `T9QX`) with autocomplete, so users rarely type them. Replies about a user's own state are ephemeral; bet proposals, resolutions, and mutes post publicly in the channel or the configured announce channel.
+Slash commands are guild-only. Bets and tokens have short IDs (e.g. `B7K2`, `T9QX`), but users never see them: options pick a bet from autocomplete, searched by either party's name or the prediction, and the short ID is only the value sent back. Replies about a user's own state are ephemeral; bet proposals, resolutions, and mutes post publicly in the channel or the configured announce channel.
 
 **Member commands**
 
 | Command | Options | Who | Behavior |
 | --- | --- | --- | --- |
-| `/bet create` | `opponent` (user), `terms` (≤200 chars), `duration` (choice) | Anyone | Posts a public embed with **🤝 Accept**, **Decline**, and **Cancel** buttons. Becomes Active when both parties have clicked Accept. |
+| `/bet create` | `opponent` (user), `prediction` (≤200 chars, stored as `terms`), `duration` (autocomplete) | Anyone | Posts a public embed ("@A bets that ...") with **Accept**, **Decline**, and **Cancel** buttons. Becomes Active when both parties have clicked Accept. |
 | `/bet cancel` | `bet` | Challenger | Proposed bets only (same as the Cancel button). Active bets need `/bet void`. |
 | `/bet resolve` | `bet`, `outcome` (I won / They won) | Either party | Opens a claim and DMs the other party to confirm or dispute. |
 | `/bet void` | `bet` | Either party | Proposes a no-contest and DMs the other party; takes effect when they confirm. |
@@ -88,9 +88,9 @@ Slash commands are guild-only. Bets and tokens use short human IDs (e.g. `B7K2`,
 | `/bet dispute` | `bet`, `reason` (optional) | The non-claiming party | Moves the bet to Disputed and notifies admins. |
 | `/bet list` | `user` (optional), `status` (optional) | Anyone | Paginated list, ephemeral. |
 | `/bet info` | `bet` | Anyone | Full history of the bet, ephemeral. |
-| `/mute tokens` | — | Anyone | Your unspent and queued tokens, with target, duration, and expiry. |
-| `/mute redeem` | `token`, `queue` (bool, default false) | Token holder | Mutes the loser now. If the server is at its cap: rejected with the token kept, or with `queue:true`, queued to start the moment a slot frees. |
-| `/mute unqueue` | `token` | Token holder | Pulls a queued token back to Available. |
+| `/mute list` | — | Anyone | Mutes you've won and haven't used, with target, duration, and deadline. |
+| `/mute use` | `bet`, `queue` (bool, default false) | The winner | Mutes the loser now (same as the **Mute** button on the resolved bet card). If the server is at its cap: rejected with the mute kept, or with `queue:true`, queued to start the moment a slot frees. The button offers **Wait in line** instead. |
+| `/mute unqueue` | `bet` | The winner | Takes a waiting mute out of line. |
 | `/mute status` | — | Anyone | Who is bet-muted right now, when each mute ends, and the queue. |
 
 **DM notifications.** When one party opens a claim or proposes a void, the bot DMs the other party an embed with **Confirm** and **Dispute** buttons. The button's custom ID carries the bet ID, and the handler re-checks everything server-side. If the DM fails (closed DMs, error 50007), the bot pings them in the announce channel instead. DM buttons also work for someone who is currently timed out, since the interaction happens outside the server. The bot also DMs a token holder when their queued mute starts.
@@ -101,7 +101,7 @@ Slash commands are guild-only. Bets and tokens use short human IDs (e.g. `B7K2`,
 | --- | --- | --- |
 | `/mutebet rule` | `bet`, `winner` or `void` | Resolves or voids any Active or Disputed bet immediately. |
 | `/mutebet unmute` | `user` | Ends a bet-mute early: clears the timeout and removes the role. |
-| `/mutebet revoke` | `token` | Revokes an unspent token. |
+| `/mutebet revoke` | `bet` | Cancels a won mute that hasn't been used. |
 | `/mutebet config view` | — | Shows current settings. |
 | `/mutebet config set` | one option per setting | Updates settings (see Server configuration). |
 | `/mutebet repair` | — | Recreates the marker role if missing and reports permission and hierarchy problems. |
@@ -111,12 +111,12 @@ The `resolve` wording ("I won / They won") avoids asking the caller to pick a us
 
 ## Server configuration
 
-Every setting has a safe default so the bot works the moment it joins. Changes apply to new bets and tokens only; in-flight records keep the values snapshotted when they were created.
+Every setting has a safe default so the bot works the moment it joins. Changes apply to new bets and won mutes only; in-flight records keep the values snapshotted when they were created.
 
 | Setting | Default | Allowed values | Notes |
 | --- | --- | --- | --- |
-| `max_concurrent_mutes` | 3 | 1–25 | Cap on simultaneous bet-mutes. Over the cap, redemptions are rejected with the token kept, unless the holder opts into the queue with queue:true. |
-| `token_expiry` | 30 days | 7d, 30d, 90d, 365d, never | Snapshotted onto each token at issue. |
+| `max_concurrent_mutes` | 3 | 1–25 | Cap on simultaneous bet-mutes. Over the cap, a mute is rejected and kept, unless the winner chooses to wait in line. |
+| `mute_expiry` | 30 days | 7d, 30d, 90d, 365d, never | Snapshotted onto each token at issue. |
 | `allowed_durations` | 30m, 1h, 2h, 6h, 24h | Any subset of those five | Controls the `duration` choices offered by `/bet create`. |
 | `confirm_window` | 72 h | 1 h–14 d | Unanswered claims become Disputed. |
 | `target_cooldown` | 24 h | 0–7 d | Minimum gap between the end of one bet-mute on a user and the start of the next. |
@@ -144,7 +144,7 @@ sequenceDiagram
     participant B as Bot
     participant DB as Postgres
     participant D as Discord API
-    W->>B: /mute redeem T9QX
+    W->>B: Mute button (or /mute use)
     B->>DB: BEGIN; lock guild row;<br/>count active mutes; check cooldown
     B->>D: fetch target member<br/>(present? mutable? existing timeout?)
     B->>DB: token Available→Active,<br/>insert mute(ends_at)
@@ -167,7 +167,7 @@ If the timeout call fails, the transaction rolls back and the token stays Availa
 
 - The cap is checked inside a transaction holding a row lock on the guild (`SELECT … FOR UPDATE`). Without it, two simultaneous redemptions could both see 2 of 3 and push the server to 4.
 - A mute counts toward the cap until its `ends_at` or an admin lifts it. Paused mutes (loser left the server) and honor mutes don't count.
-- Over the cap, `/mute redeem` rejects and keeps the token by default. With `queue:true`, the token moves to Queued with a `queued_at` timestamp.
+- Over the cap, using a mute rejects and keeps it by default. With `queue:true`, the token moves to Queued with a `queued_at` timestamp.
 - Whenever a mute ends or is lifted, the same code path that removes the role then takes the guild lock and starts the oldest eligible queued token. A queued token is skipped (and stays queued) if its target is absent, in cooldown, or already muted, so one blocked target can't stall everyone behind it.
 - Queued tokens don't expire while waiting. The holder is DM'd when their mute starts, and `/mute unqueue` returns the token to Available.
 
@@ -180,9 +180,9 @@ If the timeout call fails, the transaction rolls back and the token stays Availa
 
 **Marker role**
 
-- Created as `MuteBetBot · Muted` (the middle dot makes collisions with hand-made roles very unlikely): no permissions, not mentionable, **hoisted** so losers show as their own group in the member list.
+- Created as `Bet Muted`: no permissions, not mentionable, **hoisted** so losers show as their own group in the member list.
 - After creation the bot never touches the role's name, color, hoist, or icon. Admins can restyle or un-hoist it in Server Settings, and the bot keeps working because it tracks the role by stored ID, never by name.
-- If the stored role is gone, `/mute redeem` recreates it with the defaults before applying.
+- If the stored role is gone, using a mute recreates it with the defaults before applying.
 
 **Honor mutes (admins and other unmutable members)**
 
@@ -267,7 +267,7 @@ The biggest risks are a bet that can't be paid out, a mute that overrides a mode
 | Opponent declines | Bet goes Declined and the embed's buttons are disabled. |
 | Proposal message deleted before acceptance | Bet Cancelled. After acceptance, the bet lives on in the database regardless. |
 | Button clicked while the bot is offline | Discord shows "interaction failed"; the user clicks again once the bot is back. On startup the bot re-renders embeds for bets whose state changed while it was down (e.g. expired). |
-| `terms` contains `@everyone`, role pings, or invite links | All bot messages use `allowedMentions` restricted to the intended users; terms are length-capped and shown in a quote block. |
+| `terms` contains `@everyone`, role pings, or invite links | All bot messages use `allowedMentions` restricted to the intended users; terms are length-capped. |
 | Spam proposals | `max_open_proposals_per_user` (default 3) plus a per-user cooldown on `/bet create` (e.g. 1 per 30 s). |
 | Duplicate bet between the same pair on the same terms | Allowed. People genuinely re-bet; the per-user cap limits abuse. |
 
@@ -309,7 +309,7 @@ The biggest risks are a bet that can't be paid out, a mute that overrides a mode
 | --- | --- |
 | Admin lowers the cap below current active mutes | Running mutes finish; new redemptions wait until the count drops. |
 | Admin removes a duration from `allowed_durations` | Existing bets and tokens keep their duration. |
-| Admin changes `token_expiry` | Affects tokens issued afterwards only. |
+| Admin changes `mute_expiry` | Affects tokens issued afterwards only. |
 | Bot disabled via `enabled = false` | New bets and redemptions blocked; running mutes and resolutions continue. |
 | User requests data deletion | Delete their rows or anonymize them to a tombstone ID; document the process in the privacy policy. |
 | Bot grows past 2,500 servers | Sharding becomes mandatory. Each shard reconciles only the mutes for its own guilds on startup. |
@@ -423,7 +423,7 @@ what you built and anything you deviated from, then STOP and wait for me.
 5. Bets: /bet create with Accept/Decline/Cancel buttons, message-delete
    cancel, resolve, void, confirm, dispute (slash + DM buttons), list,
    info, autocomplete for bet IDs.
-6. Tokens & mutes: /mute tokens, redeem (with queue option), unqueue,
+6. Tokens & mutes: /mute list, use (with queue option), unqueue,
    status; scheduler and queue promotion; startup reconciliation;
    honor mutes with rate-limited callouts; pause on leave and resume on
    rejoin per rejoin_policy; audit-log detection of manual unmutes.
