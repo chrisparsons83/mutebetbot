@@ -1,0 +1,18 @@
+---
+import { inviteUrl } from '@mutebetbot/shared';
+import Base from '../layouts/Base.astro';
+
+const clientId = process.env.DISCORD_CLIENT_ID;
+if (!clientId) throw new Error('DISCORD_CLIENT_ID must be set to build the /invite page');
+// Same permission integer the bot documents; see packages/shared/src/permissions.ts.
+const url = inviteUrl(clientId);
+---
+
+<Base title="Add to Discord">
+  <meta slot="head" http-equiv="refresh" content={`0; url=${url}`} />
+  <script slot="head" is:inline define:vars={{ url }}>
+    location.replace(url);
+  </script>
+  <h1>Adding MuteBetBot…</h1>
+  <p>If you aren't redirected, <a href={url}>continue to Discord</a>.</p>
+</Base>

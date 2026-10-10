@@ -4,3 +4,5 @@ dist/
 .env.*
 !.env.example
 *.log
+.discord-info
+apps/web/.astro/

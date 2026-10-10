@@ -9,7 +9,8 @@
 # Steps (each is skipped if its prerequisites don't exist yet):
 #   1. Ensure .env exists (copy from the primary checkout, else .env.example).
 #   2. pnpm install.
-#   3. Run database migrations.
+#   3. Start the shared dev Postgres (docker compose) and ensure the test database exists.
+#   4. Run database migrations.
 #
 # Safe to re-run.
 set -euo pipefail
@@ -35,6 +36,15 @@ if [[ ! -f .env ]]; then
   fi
 fi
 
+# --- Node version from .nvmrc (when nvm is installed) ------------------------------
+if [[ -f .nvmrc && -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+  set +u
+  # shellcheck disable=SC1091
+  source "${NVM_DIR:-$HOME/.nvm}/nvm.sh" >/dev/null
+  nvm install >/dev/null && nvm use >/dev/null && log "Using Node $(node -v)"
+  set -u
+fi
+
 # --- 2. Dependencies -----------------------------------------------------------
 if [[ -f package.json ]]; then
   if ! command -v pnpm >/dev/null; then
@@ -50,7 +60,22 @@ else
   log "No package.json yet; skipping install"
 fi
 
-# --- 3. Migrations -------------------------------------------------------------
+# --- 3. Postgres ---------------------------------------------------------------
+if [[ -f compose.yaml ]] && command -v docker >/dev/null && docker info >/dev/null 2>&1; then
+  if docker compose up -d --wait postgres >/dev/null 2>&1; then
+    log "Postgres is up"
+    docker compose exec -T postgres sh -c \
+      'psql -U "$POSTGRES_USER" -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '"'"'${POSTGRES_DB}_test'"'"'" | grep -q 1 \
+        || createdb -U "$POSTGRES_USER" "${POSTGRES_DB}_test"' \
+      && log "Test database ready" || warn "Could not create the test database"
+  else
+    warn "Could not start Postgres; run 'pnpm db:up' later"
+  fi
+else
+  log "Docker not available; skipping Postgres"
+fi
+
+# --- 4. Migrations -------------------------------------------------------------
 has_script() { [[ -f package.json ]] && node -e "process.exit(require('./package.json').scripts?.['$1'] ? 0 : 1)"; }
 if has_script db:migrate; then
   if pnpm run db:migrate; then

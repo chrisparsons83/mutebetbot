@@ -1,0 +1,17 @@
+---
+import { SUPPORT_LINKS } from '@mutebetbot/shared';
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Support" description="Get help with MuteBetBot.">
+  <h1>Support</h1>
+  <ul>
+    <li>Bugs and feature requests: <a href={SUPPORT_LINKS.issues}>GitHub issues</a>.</li>
+    {SUPPORT_LINKS.supportServer && <li>Chat with us: <a href={SUPPORT_LINKS.supportServer}>support server</a>.</li>}
+    <li>Something not working in your server? Run <code>/mutebet repair</code> first; it checks permissions and role order.</li>
+  </ul>
+  <h2>Common questions</h2>
+  <p><strong>The bot says it can't time someone out.</strong> Its role must be above theirs. See <a href="/setup">Setup</a>.</p>
+  <p><strong>A bet is stuck.</strong> Admins can settle any active or disputed bet with <code>/mutebet rule</code>.</p>
+  <p><strong>We want to remove the bot.</strong> Run <code>/mutebet uninstall</code> first so it cleans up its role.</p>
+</Base>

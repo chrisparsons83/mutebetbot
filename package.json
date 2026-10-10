@@ -1,0 +1,31 @@
+{
+  "name": "mutebetbot",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.5.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:up": "docker compose up -d postgres",
+    "db:generate": "pnpm --filter @mutebetbot/db generate",
+    "db:migrate": "pnpm --filter @mutebetbot/db migrate",
+    "bot:dev": "pnpm --filter @mutebetbot/bot dev",
+    "bot:register": "pnpm --filter @mutebetbot/bot register",
+    "web:dev": "pnpm --filter @mutebetbot/web dev",
+    "web:build": "pnpm --filter @mutebetbot/web build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.0.0",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.3"
+  }
+}

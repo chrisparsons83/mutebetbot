@@ -1,0 +1,23 @@
+# Local development: only Postgres. Run the bot and site with pnpm.
+# Production stack lives in compose.prod.yaml.
+name: mutebetbot
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mutebet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mutebet}
+      POSTGRES_DB: ${POSTGRES_DB:-mutebet}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5437}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

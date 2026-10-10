@@ -1,0 +1,20 @@
+{
+  "name": "@mutebetbot/bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=../../.env src/index.ts",
+    "start": "node src/index.ts",
+    "register": "node --env-file-if-exists=../../.env scripts/register-commands.ts"
+  },
+  "dependencies": {
+    "@mutebetbot/db": "workspace:*",
+    "@mutebetbot/shared": "workspace:*",
+    "discord.js": "^14.27.0",
+    "pino": "^10.4.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "pino-pretty": "^13.2.0"
+  }
+}
