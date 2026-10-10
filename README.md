@@ -38,6 +38,6 @@ One-time setup:
 
 - Repo secrets (same as flexspotff): `VULTR_USERNAME`, `VULTR_API_KEY`, `DEPLOY_HOST`, `DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_KEY`.
 - Repo variable `DISCORD_CLIENT_ID` for the production app (used to build the `/invite` page).
-- On the server, `~/mutebetbot/.env` with `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`.
+- On the server, `~/mutebetbot/.env` with `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DATABASE_URL` (pointing at the existing Postgres container by name), and `POSTGRES_NETWORK` (that container's Docker network).
 
 Run only one bot process per token.
