@@ -1,51 +1,66 @@
-# Production stack on the Vultr VPS: a one-shot migration, the bot, and the website
-# behind Traefik. Uses the server's existing Postgres container (not its own).
-# CI copies this file to ~/mutebetbot/compose.yaml on the server and runs `docker compose pull && docker compose up -d` (see .github/workflows/ci.yml).
-# The server also needs ~/mutebetbot/.env with DATABASE_URL (host = the Postgres container's
-# name), POSTGRES_NETWORK (the Docker network that container is on), and the Discord vars.
+# Production compose file for the Vultr box. Edit it here, not on the server: every
+# deploy copies it to ~/mutebetbot/compose.yaml (see .github/workflows/ci.yml).
+#
+# Secrets live in the sibling ~/mutebetbot/.env: DISCORD_TOKEN, DISCORD_CLIENT_ID,
+# POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB. Nothing sensitive belongs in this file.
+#
+# Uses the server's shared Postgres (container `postgres` on the `internal` network)
+# and its shared Traefik (network `web`, entrypoint `websecure`, resolver `lets-encrypt`).
 name: mutebetbot
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+x-db-url: &db-url postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
 
 services:
   # Runs migrations, then exits; the bot waits for it to succeed.
   migrate:
     image: sjc.vultrcr.com/chrisparsons/mutebetbot-bot:latest
-    command: ["node", "packages/db/src/migrate.ts"]
+    command: ['node', 'packages/db/src/migrate.ts']
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-    networks: [db]
-    restart: "no"
+      DATABASE_URL: *db-url
+    networks: [internal]
+    restart: 'no'
+    logging: *logging
 
   bot:
+    container_name: mutebetbot
     image: sjc.vultrcr.com/chrisparsons/mutebetbot-bot:latest
+    # unless-stopped so the bot comes back after a host reboot.
     restart: unless-stopped
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN}
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: *db-url
       LOG_LEVEL: ${LOG_LEVEL:-info}
       NODE_ENV: production
     depends_on:
       migrate: { condition: service_completed_successfully }
-    networks: [db]
+    # No Traefik labels: the bot serves no public HTTP. It joins `internal` only to reach Postgres.
     # Exactly one bot process per token: two would double-apply timers.
-    deploy: { replicas: 1 }
+    networks: [internal]
+    logging: *logging
 
   web:
+    container_name: mutebetbot-web
     image: sjc.vultrcr.com/chrisparsons/mutebetbot-web:latest
     restart: unless-stopped
-    networks: [default, traefik]
     labels:
-      traefik.enable: "true"
-      traefik.docker.network: traefik
-      traefik.http.routers.mutebetbot.rule: Host(`mutebetbot.flexspotff.com`)
-      traefik.http.routers.mutebetbot.entrypoints: websecure
-      traefik.http.routers.mutebetbot.tls: "true"
-      traefik.http.services.mutebetbot.loadbalancer.server.port: "80"
+      - traefik.enable=true
+      - traefik.http.routers.mutebetbot.rule=Host(`mutebetbot.flexspotff.com`)
+      - traefik.http.routers.mutebetbot.tls=true
+      - traefik.http.routers.mutebetbot.tls.certresolver=lets-encrypt
+      - traefik.http.routers.mutebetbot.entrypoints=websecure
+      - traefik.http.services.mutebetbot.loadbalancer.server.port=80
+    networks: [web]
+    logging: *logging
 
 networks:
-  traefik:
+  web:
     external: true
-  # The network the existing Postgres container is on.
-  db:
+  internal:
     external: true
-    name: ${POSTGRES_NETWORK}

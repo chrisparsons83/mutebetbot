@@ -38,6 +38,7 @@ One-time setup:
 
 - Repo secrets (same as flexspotff): `VULTR_USERNAME`, `VULTR_API_KEY`, `DEPLOY_HOST`, `DEPLOY_PORT`, `DEPLOY_USER`, `DEPLOY_KEY`.
 - Repo variable `DISCORD_CLIENT_ID` for the production app (used to build the `/invite` page).
-- On the server, `~/mutebetbot/.env` with `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `DATABASE_URL` (pointing at the existing Postgres container by name), and `POSTGRES_NETWORK` (that container's Docker network).
+- On the server, `~/mutebetbot/.env` with `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` (a role and database in the shared `postgres` container).
+- DNS for `mutebetbot.flexspotff.com` must be DNS-only (not Cloudflare-proxied) so Traefik's Let's Encrypt TLS challenge works.
 
 Run only one bot process per token.
